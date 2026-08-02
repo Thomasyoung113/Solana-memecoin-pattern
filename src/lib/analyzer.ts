@@ -1,6 +1,5 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 import { getTokenOverview, type TokenOverview } from './birdeye'
-import { getTokenInfo, getTokenHolders, getTopTokenHolders, type TokenHolder } from './helius'
+import { getTokenInfo, getTokenHolders, type TokenHolder } from './helius'
 import { getDb } from './db'
 
 export interface AnalysisResult {

@@ -1,6 +1,4 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 import type { AnalysisResult } from './analyzer'
-import { detectVolumeManipulation } from './dexscreener'
 
 // === SHARED TYPES ===
 
@@ -176,7 +174,7 @@ export function analyzePatterns(results: AnalysisResult[]): PatternAnalysis {
 
   // 3. Pairwise token similarity
   const tokenSimilarities: TokenSimilarity[] = []
-  const successSet = new Set(successful.map(s => s.mint))
+  const _successSet = new Set(successful.map(s => s.mint))
 
   for (let i = 0; i < results.length; i++) {
     for (let j = i + 1; j < results.length; j++) {

@@ -96,7 +96,7 @@ export function detectVolumeManipulation(token: DexToken): {
   const reasons: string[] = []
 
   const volM5 = parseFloat(token.volume?.m5 || '0')
-  const volH1 = parseFloat(token.volume?.h1 || '0')
+  const _volH1 = parseFloat(token.volume?.h1 || '0')
   const volH24 = parseFloat(token.volume?.h24 || '0')
   const liq = parseFloat(token.liquidity?.usd || '0')
   const buysM5 = token.txns?.m5?.buys || 0

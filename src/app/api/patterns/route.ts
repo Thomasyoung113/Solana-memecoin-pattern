@@ -12,7 +12,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'max 50 mints per batch' }, { status: 400 })
     }
 
-    const valid = mints.filter((m: any) => typeof m === 'string' && m.length >= 32)
+    const valid = mints.filter((m: unknown) => typeof m === 'string' && m.length >= 32)
     if (valid.length === 0) {
       return NextResponse.json({ error: 'no valid mint addresses' }, { status: 400 })
     }

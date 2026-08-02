@@ -53,7 +53,6 @@ export async function getTokenInfo(mint: string): Promise<TokenInfo | null> {
 export async function getTokenHolders(
   mint: string,
   deployerAddress: string,
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   _deployTimestamp: number
 ): Promise<TokenHolder[]> {
   try {

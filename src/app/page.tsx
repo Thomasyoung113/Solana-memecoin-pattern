@@ -34,16 +34,14 @@ export default function Home() {
   const [batchResults, setBatchResults] = useState<BatchItem[]>([])
   const [patternResult, setPatternResult] = useState<PatternAnalysis | null>(null)
   const [trending, setTrending] = useState<TrendingToken[]>([])
-  const [trendingLoading, setTrendingLoading] = useState(false)
+  const [trendingLoading] = useState(true)
   const [mode, setMode] = useState<TabMode>('single')
 
   useEffect(() => {
-    setTrendingLoading(true)
     fetch('/api/trending')
       .then(r => r.json())
       .then(d => { if (d.trending) setTrending(d.trending) })
       .catch(() => {})
-      .finally(() => setTrendingLoading(false))
   }, [])
 
   const analyze = useCallback(async (mint: string) => {
@@ -86,7 +84,7 @@ export default function Home() {
     finally { setLoading(false) }
   }, [mintInput])
 
-  const handleSubmit = (e: React.FormEvent) => { e.preventDefault(); mode === 'single' ? analyze(mintInput.trim()) : mode === 'batch' ? analyzeBatch() : analyzePatterns() }
+  const handleSubmit = (e: React.FormEvent) => { e.preventDefault(); if (mode === 'single') analyze(mintInput.trim()); else if (mode === 'batch') analyzeBatch(); else analyzePatterns() }
 
   return (
     <div className="flex flex-col min-h-screen">

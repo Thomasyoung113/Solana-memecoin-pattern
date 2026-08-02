@@ -50,8 +50,8 @@ export async function getTokenHolders(mint: string): Promise<any[]> {
     const res = await fetch(`${JUPITER_API}/token/${mint}`, {
       headers: { accept: 'application/json' },
     })
-    const json = await res.json()
-    // Jupiter doesn't provide holder data, so we return empty and rely on Helius
+    const _json = await res.json()
+    // Jupiter doesn't provide holder data
     return []
   } catch {
     return []

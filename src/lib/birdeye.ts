@@ -9,10 +9,15 @@ interface BirdeyeResponse<T> {
 }
 
 async function birdeyeFetch<T>(path: string): Promise<T | null> {
+  if (!config.birdeyeApiKey || config.birdeyeApiKey === 'your_key_here') {
+    console.warn('Birdeye API key not configured')
+    return null
+  }
   try {
     const res = await fetch(`${BIRDEYE_BASE}${path}`, {
       headers: {
         'x-api-key': config.birdeyeApiKey,
+        'x-chain': 'solana',
         'accept': 'application/json',
       },
     })
@@ -22,11 +27,6 @@ async function birdeyeFetch<T>(path: string): Promise<T | null> {
     console.error(`Birdeye API error [${path}]:`, error)
     return null
   }
-}
-
-export interface PricePoint {
-  unixTime: number
-  value: number
 }
 
 export interface TokenOverview {
@@ -48,11 +48,16 @@ export interface OHLCV {
   unixTime: number
 }
 
-// Get token overview (market cap, price, liquidity, holders)
+// Get token price
+export async function getTokenPrice(address: string): Promise<number | null> {
+  const data = await birdeyeFetch<{ value: number }>(`/defi/price?address=${address}`)
+  return data?.value ?? null
+}
+
+// Get token overview
 export async function getTokenOverview(address: string): Promise<TokenOverview | null> {
   const data = await birdeyeFetch<any>(`/defi/token_overview?address=${address}`)
   if (!data) return null
-
   return {
     address,
     mc: data.mc ?? null,
@@ -64,7 +69,7 @@ export async function getTokenOverview(address: string): Promise<TokenOverview |
   }
 }
 
-// Get historical OHLCV for price analysis
+// Get OHLCV
 export async function getOhlcv(
   address: string,
   type: '1m' | '5m' | '15m' | '30m' | '1H' | '4H' | '1D' = '1H',
@@ -74,53 +79,24 @@ export async function getOhlcv(
   let path = `/defi/ohlcv?address=${address}&type=${type}`
   if (timeFrom) path += `&time_from=${timeFrom}`
   if (timeTo) path += `&time_to=${timeTo}`
-
   const data = await birdeyeFetch<{ items: OHLCV[] }>(path)
   return data?.items ?? null
 }
 
-// Get historical price (simplified version)
-export async function getHistoricalPrice(
-  address: string,
-  timeFrom?: number,
-  timeTo?: number
-): Promise<PricePoint[] | null> {
-  const ohlcv = await getOhlcv(address, '1H', timeFrom, timeTo)
-  if (!ohlcv) return null
-
-  return ohlcv.map((p) => ({
-    unixTime: p.unixTime,
-    value: p.c,
-  }))
-}
-
-// Get top traders (buyers/sellers with highest volume)
-export async function getTopTraders(
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  _address: string
-): Promise<any[] | null> {
-  return null // Birdeye free tier limitations
-}
-
-// Get trending tokens on Solana
+// Get trending tokens
 export async function getTrending(): Promise<any[] | null> {
-  const data = await birdeyeFetch<any[]>('/defi/trending?chain=solana')
+  const data = await birdeyeFetch<any[]>('/defi/trending')
   return data
 }
 
-// Get security info (rug pull indicators)
+// Get security info
 export async function getSecurityInfo(address: string): Promise<any | null> {
   const data = await birdeyeFetch<any>(`/defi/token_security?address=${address}`)
   return data
 }
 
-// Get recent trades for a token
-export async function getTrades(
-  address: string,
-  limit = 50
-): Promise<any[] | null> {
-  const data = await birdeyeFetch<any[]>(
-    `/defi/txs/token?address=${address}&limit=${limit}`
-  )
+// Get recent trades
+export async function getTrades(address: string, limit = 50): Promise<any[] | null> {
+  const data = await birdeyeFetch<any[]>(`/defi/txs/token?address=${address}&limit=${limit}`)
   return data
 }

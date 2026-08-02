@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from 'react'
 
 type Severity = 'low' | 'medium' | 'high' | 'critical'
 type Verdict = 'bullish' | 'neutral' | 'bearish'
+type TabMode = 'single' | 'batch' | 'patterns'
 
 interface PatternScore { name: string; score: number; detail: string }
 interface RedFlag { severity: Severity; issue: string; detail: string }
@@ -11,6 +12,17 @@ interface TokenOverview { address: string; mc: number | null; price: number | nu
 interface AnalysisResult { mint: string; timestamp: number; overview: TokenOverview | null; patterns: PatternScore[]; redFlags: RedFlag[]; overallScore: number; verdict: Verdict }
 interface BatchItem { mint: string; status: 'ok' | 'error'; result: AnalysisResult | null; error: string | null }
 interface TrendingToken { address: string; name?: string; symbol?: string; mc?: number }
+
+// Pattern analysis types
+interface DeployerProfile { address: string; tokensLaunched: number; tokens: string[]; avgScore: number; prevSuccess: boolean }
+interface HolderCluster { address: string; appearsIn: number; tokens: string[]; avgEntryTime: number; estimatedPnL: string }
+interface ReplicaPrediction { mint: string; replicaScore: number; matchedToken: string; matchFactors: string[]; confidence: string }
+interface EntrySignal { mint: string; entryScore: number; suggestedEntry: string; avgFirstPumpTime: string | null; riskLevel: string }
+interface PatternAnalysis {
+  totalAnalyzed: number; successfulCount: number; insights: string[]
+  deployerProfiles: DeployerProfile[]; holderClusters: HolderCluster[]
+  replicaPredictions: ReplicaPrediction[]; entrySignals: EntrySignal[]
+}
 
 function CornerSquare() { return <div className="w-3 h-3 bg-[var(--green)] shrink-0" /> }
 
@@ -20,9 +32,10 @@ export default function Home() {
   const [error, setError] = useState('')
   const [result, setResult] = useState<AnalysisResult | null>(null)
   const [batchResults, setBatchResults] = useState<BatchItem[]>([])
+  const [patternResult, setPatternResult] = useState<PatternAnalysis | null>(null)
   const [trending, setTrending] = useState<TrendingToken[]>([])
   const [trendingLoading, setTrendingLoading] = useState(false)
-  const [mode, setMode] = useState<'single' | 'batch'>('single')
+  const [mode, setMode] = useState<TabMode>('single')
 
   useEffect(() => {
     setTrendingLoading(true)
@@ -49,7 +62,7 @@ export default function Home() {
     const mints = mintInput.split('\n').map(s => s.trim()).filter(Boolean)
     if (mints.length === 0) { setError('Paste at least one mint address'); return }
     if (mints.length > 50) { setError('Max 50 addresses per batch'); return }
-    setLoading(true); setError(''); setResult(null); setBatchResults([])
+    setLoading(true); setError(''); setResult(null); setBatchResults([]); setPatternResult(null)
     try {
       const res = await fetch('/api/analyze/batch', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mints }) })
       const json = await res.json()
@@ -59,7 +72,21 @@ export default function Home() {
     finally { setLoading(false) }
   }, [mintInput])
 
-  const handleSubmit = (e: React.FormEvent) => { e.preventDefault(); mode === 'single' ? analyze(mintInput.trim()) : analyzeBatch() }
+  const analyzePatterns = useCallback(async () => {
+    const mints = mintInput.split('\n').map(s => s.trim()).filter(Boolean)
+    if (mints.length < 2) { setError('Need at least 2 addresses for pattern analysis'); return }
+    if (mints.length > 50) { setError('Max 50 addresses'); return }
+    setLoading(true); setError(''); setResult(null); setBatchResults([]); setPatternResult(null)
+    try {
+      const res = await fetch('/api/patterns', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mints }) })
+      const json = await res.json()
+      if (!res.ok) throw new Error(json.error || 'Pattern analysis failed')
+      setPatternResult(json)
+    } catch (e: unknown) { setError(e instanceof Error ? e.message : 'Pattern analysis failed') }
+    finally { setLoading(false) }
+  }, [mintInput])
+
+  const handleSubmit = (e: React.FormEvent) => { e.preventDefault(); mode === 'single' ? analyze(mintInput.trim()) : mode === 'batch' ? analyzeBatch() : analyzePatterns() }
 
   return (
     <div className="flex flex-col min-h-screen">
@@ -80,6 +107,7 @@ export default function Home() {
         <div className="flex gap-[2px] mb-[24px]">
           <button onClick={() => setMode('single')} className={`px-4 py-2 text-[14px] font-bold uppercase rounded-sm transition-colors ${mode === 'single' ? 'bg-[var(--green)] text-[var(--ink)]' : 'bg-[var(--surface-soft)] text-[var(--mute)] hover:bg-[var(--hairline)]'}`}>Single</button>
           <button onClick={() => setMode('batch')} className={`px-4 py-2 text-[14px] font-bold uppercase rounded-sm transition-colors ${mode === 'batch' ? 'bg-[var(--green)] text-[var(--ink)]' : 'bg-[var(--surface-soft)] text-[var(--mute)] hover:bg-[var(--hairline)]'}`}>Batch</button>
+          <button onClick={() => setMode('patterns')} className={`px-4 py-2 text-[14px] font-bold uppercase rounded-sm transition-colors ${mode === 'patterns' ? 'bg-[var(--green)] text-[var(--ink)]' : 'bg-[var(--surface-soft)] text-[var(--mute)] hover:bg-[var(--hairline)]'}`}>Patterns</button>
         </div>
 
         {/* Input */}
@@ -94,7 +122,7 @@ export default function Home() {
               <textarea value={mintInput} onChange={e => setMintInput(e.target.value)} placeholder="Paste Solana mint addresses (one per line)&#10;Max 50 addresses" className="w-full bg-[var(--canvas)] border border-[var(--hairline)] rounded-sm px-4 py-3 text-[16px] outline-none focus:border-[var(--green)] transition-colors font-mono" style={{ minHeight: 120 }} />
               <div className="flex items-center justify-between">
                 <span className="text-[14px] text-[var(--mute)]">{mintInput.split('\n').filter(Boolean).length} addresses</span>
-                <button type="submit" disabled={loading} className="bg-[var(--green)] text-[var(--ink)] font-bold text-[16px] rounded-sm disabled:opacity-50 transition-colors" style={{ padding: '11px 24px', height: 44 }}>{loading ? 'SCANNING...' : 'SCAN ALL'}</button>
+                <button type="submit" disabled={loading} className="bg-[var(--green)] text-[var(--ink)] font-bold text-[16px] rounded-sm disabled:opacity-50 transition-colors" style={{ padding: '11px 24px', height: 44 }}>{loading ? (mode === 'patterns' ? 'ANALYZING...' : 'SCANNING...') : (mode === 'patterns' ? 'FIND PATTERNS' : 'SCAN ALL')}</button>
               </div>
             </div>
           )}
@@ -166,10 +194,91 @@ export default function Home() {
               </div>
             )}
 
-            {!result && !batchResults.length && !loading && !error && (
+            {/* Pattern analysis results */}
+            {patternResult && !loading && (
+              <div className="space-y-[24px]">
+                {/* Summary */}
+                <div className="border border-[var(--hairline)] rounded-sm" style={{ padding: '24px' }}>
+                  <div className="flex items-center gap-[8px] mb-[16px]"><CornerSquare /><span className="text-[14px] font-bold uppercase">PATTERN ANALYSIS</span></div>
+                  <div className="grid grid-cols-3 gap-[16px] mb-[16px]">
+                    <div><p className="text-[12px] text-[var(--mute)] uppercase font-bold">Analyzed</p><p className="text-[20px] font-bold">{patternResult.totalAnalyzed}</p></div>
+                    <div><p className="text-[12px] text-[var(--mute)] uppercase font-bold">Bullish</p><p className="text-[20px] font-bold text-[var(--green)]">{patternResult.successfulCount}</p></div>
+                    <div><p className="text-[12px] text-[var(--mute)] uppercase font-bold">Replicas</p><p className="text-[20px] font-bold">{patternResult.replicaPredictions.length}</p></div>
+                  </div>
+                  {patternResult.insights.length > 0 && (
+                    <div className="space-y-[4px]">
+                      {patternResult.insights.map((insight, i) => (
+                        <p key={i} className="text-[14px] text-[var(--body)] flex items-start gap-[6px]"><span className="text-[var(--green)] mt-[2px] shrink-0">▸</span>{insight}</p>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Deployer profiles */}
+                {patternResult.deployerProfiles.length > 0 && (
+                  <div className="border border-[var(--hairline)] rounded-sm" style={{ padding: '24px' }}>
+                    <div className="flex items-center gap-[8px] mb-[16px]"><CornerSquare /><span className="text-[14px] font-bold uppercase">SERIAL DEPLOYERS</span></div>
+                    <div className="space-y-[8px]">{patternResult.deployerProfiles.map((d, i) => (
+                      <div key={i} className="flex items-center justify-between text-[14px] py-[4px] border-b border-[var(--surface-soft)]">
+                        <div><span className="font-mono text-[12px]">{d.address.slice(0, 12)}...</span></div>
+                        <div className="flex gap-[16px]"><span>{d.tokensLaunched} tokens</span><span className={d.avgScore >= 65 ? 'text-[var(--green)]' : ''}>{Math.round(d.avgScore)} avg</span></div>
+                      </div>
+                    ))}</div>
+                  </div>
+                )}
+
+                {/* Smart money clusters */}
+                {patternResult.holderClusters.length > 0 && (
+                  <div className="border border-[var(--hairline)] rounded-sm" style={{ padding: '24px' }}>
+                    <div className="flex items-center gap-[8px] mb-[16px]"><CornerSquare /><span className="text-[14px] font-bold uppercase">SMART MONEY CLUSTERS</span></div>
+                    <div className="space-y-[8px]">{patternResult.holderClusters.map((h, i) => (
+                      <div key={i} className="flex items-center justify-between text-[14px] py-[4px] border-b border-[var(--surface-soft)] last:border-0">
+                        <div><span className="font-mono text-[12px]">{h.address.slice(0, 12)}...</span></div>
+                        <span>In {h.appearsIn} tokens</span>
+                      </div>
+                    ))}</div>
+                  </div>
+                )}
+
+                {/* Replica predictions */}
+                {patternResult.replicaPredictions.length > 0 && (
+                  <div className="border border-[var(--hairline)] rounded-sm" style={{ padding: '24px' }}>
+                    <div className="flex items-center gap-[8px] mb-[16px]"><span className="w-3 h-3 bg-[var(--warning)] shrink-0" /><span className="text-[14px] font-bold uppercase">REPLICA PREDICTIONS</span></div>
+                    {patternResult.replicaPredictions.slice(0, 5).map((r, i) => (
+                      <div key={i} className="mb-[12px] pb-[12px] border-b border-[var(--surface-soft)] last:border-0 last:mb-0 last:pb-0">
+                        <div className="flex justify-between text-[14px] mb-[4px]">
+                          <span className="font-mono text-[12px]">{r.mint.slice(0, 16)}...</span>
+                          <span className={`font-bold ${r.confidence === 'high' ? 'text-[var(--green)]' : r.confidence === 'medium' ? 'text-[var(--warning)]' : 'text-[var(--mute)]'}`}>{r.replicaScore} — {r.confidence}</span>
+                        </div>
+                        {r.matchFactors.map((f, j) => <p key={j} className="text-[13px] text-[var(--mute)] ml-[4px]">▸ {f}</p>)}
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Entry signals */}
+                {patternResult.entrySignals.length > 0 && (
+                  <div className="border border-[var(--hairline)] rounded-sm" style={{ padding: '24px' }}>
+                    <div className="flex items-center gap-[8px] mb-[16px]"><CornerSquare /><span className="text-[14px] font-bold uppercase">ENTRY SIGNALS</span></div>
+                    {patternResult.entrySignals.slice(0, 5).map((e, i) => (
+                      <div key={i} className="mb-[12px] pb-[12px] border-b border-[var(--surface-soft)] last:border-0 last:mb-0 last:pb-0">
+                        <div className="flex justify-between text-[14px] mb-[4px]">
+                          <span className="font-mono text-[12px]">{e.mint.slice(0, 16)}...</span>
+                          <span className={`font-bold ${e.riskLevel === 'low' ? 'text-[var(--green)]' : e.riskLevel === 'medium' ? 'text-[var(--warning)]' : 'text-[var(--error)]'}`}>{e.entryScore}</span>
+                        </div>
+                        <p className="text-[13px] text-[var(--body)]">{e.suggestedEntry}</p>
+                        {e.avgFirstPumpTime && <p className="text-[12px] text-[var(--mute)]">{e.avgFirstPumpTime}</p>}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {!result && !batchResults.length && !patternResult && !loading && !error && (
               <div className="border border-[var(--hairline)] rounded-sm p-[64px] text-center">
                 <div className="flex justify-center mb-[16px]"><CornerSquare /></div>
-                <p className="text-[15px] text-[var(--mute)]">{mode === 'single' ? 'Enter a mint address to scan for patterns' : 'Paste multiple mint addresses to scan in batch'}</p>
+                <p className="text-[15px] text-[var(--mute)]">{mode === 'single' ? 'Enter a mint address to scan for patterns' : mode === 'patterns' ? 'Paste 2+ mint addresses to find patterns between them' : 'Paste multiple mint addresses to scan in batch'}</p>
               </div>
             )}
           </div>
@@ -183,7 +292,7 @@ export default function Home() {
               ) : trending.length > 0 ? (
                 <div className="space-y-[4px]">
                   {trending.slice(0, 8).map((t, i) => (
-                    <button key={t.address || i} onClick={() => { setMintInput(t.address); setMode('single'); analyze(t.address) }} className="w-full text-left flex items-center justify-between px-[8px] py-[6px] text-[15px] hover:bg-[var(--surface-soft)] transition-colors rounded-sm">
+                    <button key={t.address || i} onClick={() => { setMintInput(prev => prev ? prev + '\n' + t.address : t.address); setMode('patterns') }} className="w-full text-left flex items-center justify-between px-[8px] py-[6px] text-[15px] hover:bg-[var(--surface-soft)] transition-colors rounded-sm">
                       <div className="min-w-0 flex-1"><span className="font-bold truncate block">{t.symbol || t.name || t.address.slice(0, 8)}</span><span className="text-[12px] text-[var(--mute)] truncate block font-mono">{t.address.slice(0, 12)}...</span></div>
                       <span className="text-[12px] text-[var(--mute)] ml-2">{t.mc ? `$${(t.mc / 1000).toFixed(0)}k` : ''}</span>
                     </button>

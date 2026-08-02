@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { getTokenOverview, getOhlcv, getSecurityInfo, getTrades, type TokenOverview, type OHLCV } from './birdeye'
+import { getTokenOverview, type TokenOverview } from './birdeye'
 import { getTokenInfo, getTokenHolders, getTopTokenHolders, type TokenHolder } from './helius'
 import { getDb } from './db'
 
@@ -8,9 +8,6 @@ export interface AnalysisResult {
   timestamp: number
   overview: TokenOverview | null
   holders: TokenHolder[]
-  topHolders: { address: string; amount: number }[]
-  ohlcv: OHLCV[] | null
-  security: any | null
   patterns: PatternScore[]
   redFlags: RedFlag[]
   overallScore: number
@@ -31,26 +28,22 @@ export interface RedFlag {
 
 // Analyze a single token mint
 export async function analyzeToken(mint: string): Promise<AnalysisResult> {
-  const [overview, tokenInfo, security, ohlcv, trades] = await Promise.all([
+  const [overview, tokenInfo] = await Promise.all([
     getTokenOverview(mint),
     getTokenInfo(mint),
-    getSecurityInfo(mint),
-    getOhlcv(mint, '5m', Math.floor(Date.now() / 1000) - 86400), // last 24h
-    getTrades(mint, 100),
   ])
 
   const deployerAddress = tokenInfo?.deployerAddress || ''
   const deployTimestamp = tokenInfo?.deployTimestamp || 0
 
-  const [holders, topHolders] = await Promise.all([
+  const [holders] = await Promise.all([
     deployerAddress
       ? getTokenHolders(mint, deployerAddress, deployTimestamp)
       : Promise.resolve([]),
-    getTopTokenHolders(mint, 20),
   ])
 
-  const patterns = analyzePatterns(overview, holders, ohlcv, security, trades, deployTimestamp)
-  const redFlags = detectRedFlags(overview, holders, security, patterns)
+  const patterns = analyzePatterns(overview, holders, deployTimestamp)
+  const redFlags = detectRedFlags(overview, holders)
   const overallScore = computeOverallScore(patterns, redFlags)
 
   const verdict = overallScore >= 65 ? 'bullish' : overallScore >= 35 ? 'neutral' : 'bearish'
@@ -68,15 +61,12 @@ export async function analyzeToken(mint: string): Promise<AnalysisResult> {
     // non-critical
   }
 
-  return { mint, timestamp: Date.now(), overview, holders, topHolders, ohlcv, security, patterns, redFlags, overallScore, verdict }
+  return { mint, timestamp: Date.now(), overview, holders, topHolders, patterns, redFlags, overallScore, verdict }
 }
 
 function analyzePatterns(
   overview: TokenOverview | null,
   holders: TokenHolder[],
-  ohlcv: OHLCV[] | null,
-  security: any | null,
-  trades: any[] | null,
   deployTimestamp: number,
 ): PatternScore[] {
   const patterns: PatternScore[] = []
@@ -115,20 +105,7 @@ function analyzePatterns(
     })
   }
 
-  // 4. Price action (volatility)
-  if (ohlcv && ohlcv.length > 1) {
-    const prices = ohlcv.filter(Boolean).map(o => o.c)
-    const maxP = Math.max(...prices)
-    const minP = Math.min(...prices)
-    const volatility = ((maxP - minP) / (minP || 1)) * 100
-    patterns.push({
-      name: 'Price Volatility',
-      score: volatility < 50 ? 70 : volatility < 200 ? 50 : 25,
-      detail: `${volatility.toFixed(1)}% range in 24h — ${volatility > 200 ? 'extremely volatile' : volatility > 50 ? 'moderate' : 'stable'}`,
-    })
-  }
-
-  // 5. Age since deploy
+  // 4. Age since deploy
   if (deployTimestamp > 0) {
     const ageHours = (Date.now() / 1000 - deployTimestamp) / 3600
     patterns.push({
@@ -158,9 +135,6 @@ function analyzePatterns(
 function detectRedFlags(
   overview: TokenOverview | null,
   holders: TokenHolder[],
-  security: any | null,
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  _patterns: PatternScore[],
 ): RedFlag[] {
   const flags: RedFlag[] = []
 

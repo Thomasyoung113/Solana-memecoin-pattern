@@ -7,6 +7,7 @@ export async function getTokenPrice(mint: string): Promise<number | null> {
   try {
     const res = await fetch(`${JUPITER_API}/price?ids=${mint}`, {
       headers: { 'accept': 'application/json' },
+      signal: AbortSignal.timeout(10_000),
     })
     const json = await res.json()
     return json?.data?.[mint]?.price ?? null
@@ -25,7 +26,7 @@ export async function getTokenInfo(mint: string): Promise<{
   try {
     const [priceData, strictData] = await Promise.all([
       getTokenPrice(mint),
-      fetch(`${JUPITER_API}/strict-token/${mint}`, { headers: { accept: 'application/json' } }).then(r => r.json()).catch(() => null),
+      fetch(`${JUPITER_API}/strict-token/${mint}`, { headers: { accept: 'application/json' }, signal: AbortSignal.timeout(10_000) }).then(r => r.json()).catch(() => null),
     ])
 
     const strict = strictData || {}
@@ -49,8 +50,9 @@ export async function getTokenHolders(mint: string): Promise<any[]> {
     // Use Jupiter's token info for supply data
     const res = await fetch(`${JUPITER_API}/token/${mint}`, {
       headers: { accept: 'application/json' },
+      signal: AbortSignal.timeout(10_000),
     })
-    const _json = await res.json()
+    await res.json()
     // Jupiter doesn't provide holder data
     return []
   } catch {

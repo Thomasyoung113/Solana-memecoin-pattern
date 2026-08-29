@@ -60,7 +60,7 @@ export async function analyzeToken(mint: string): Promise<AnalysisResult> {
     // non-critical
   }
 
-  return { mint, timestamp: Date.now(), overview, holders, topHolders, patterns, redFlags, overallScore, verdict }
+  return { mint, timestamp: Date.now(), overview, holders, patterns, redFlags, overallScore, verdict }
 }
 
 function analyzePatterns(
@@ -163,24 +163,6 @@ function detectRedFlags(
       issue: 'No holders',
       detail: 'No token holders found — may not be traded yet',
     })
-  }
-
-  // Security checks
-  if (security) {
-    if (security.mintAuthority) {
-      flags.push({
-        severity: 'critical',
-        issue: 'Mint authority enabled',
-        detail: 'Deployer can mint new tokens — infinite dilution risk',
-      })
-    }
-    if (security.freezeAuthority) {
-      flags.push({
-        severity: 'high',
-        issue: 'Freeze authority enabled',
-        detail: 'Deployer can freeze token accounts',
-      })
-    }
   }
 
   return flags

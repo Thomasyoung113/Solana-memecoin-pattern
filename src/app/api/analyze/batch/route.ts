@@ -16,7 +16,13 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'no valid mint addresses' }, { status: 400 })
     }
 
-    const results = await Promise.allSettled(valid.map(m => analyzeToken(m)))
+    // Run in chunks to avoid hammering upstream APIs (DexScreener rate limits)
+    const CONCURRENCY = 5
+    const results: PromiseSettledResult<Awaited<ReturnType<typeof analyzeToken>>>[] = []
+    for (let i = 0; i < valid.length; i += CONCURRENCY) {
+      const chunk = valid.slice(i, i + CONCURRENCY)
+      results.push(...await Promise.allSettled(chunk.map(m => analyzeToken(m))))
+    }
 
     const analyzed = results.map((r, i) => ({
       mint: valid[i],

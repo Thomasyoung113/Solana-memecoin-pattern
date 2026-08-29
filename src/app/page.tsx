@@ -11,7 +11,6 @@ interface RedFlag { severity: Severity; issue: string; detail: string }
 interface TokenOverview { address: string; mc: number | null; price: number | null; volume24h: number | null; liquidity: number | null; holderCount: number | null; supply: number | null }
 interface AnalysisResult { mint: string; timestamp: number; overview: TokenOverview | null; patterns: PatternScore[]; redFlags: RedFlag[]; overallScore: number; verdict: Verdict }
 interface BatchItem { mint: string; status: 'ok' | 'error'; result: AnalysisResult | null; error: string | null }
-interface TrendingToken { address: string; name?: string; symbol?: string; mc?: number }
 
 // Pattern analysis types
 interface DeployerProfile { address: string; tokensLaunched: number; tokens: string[]; avgScore: number; prevSuccess: boolean }
@@ -33,16 +32,7 @@ export default function Home() {
   const [result, setResult] = useState<AnalysisResult | null>(null)
   const [batchResults, setBatchResults] = useState<BatchItem[]>([])
   const [patternResult, setPatternResult] = useState<PatternAnalysis | null>(null)
-  const [trending, setTrending] = useState<TrendingToken[]>([])
-  const [trendingLoading] = useState(true)
   const [mode, setMode] = useState<TabMode>('single')
-
-  useEffect(() => {
-    fetch('/api/trending')
-      .then(r => r.json())
-      .then(d => { if (d.trending) setTrending(d.trending) })
-      .catch(() => {})
-  }, [])
 
   const analyze = useCallback(async (mint: string) => {
     if (!mint || mint.length < 32) { setError('Enter a valid Solana mint address'); return }
@@ -283,21 +273,6 @@ export default function Home() {
 
           {/* SIDEBAR */}
           <div className="space-y-[24px]">
-            <div className="border border-[var(--hairline)] rounded-sm" style={{ padding: '24px' }}>
-              <div className="flex items-center gap-[8px] mb-[16px]"><CornerSquare /><span className="text-[14px] font-bold uppercase">TRENDING</span></div>
-              {trendingLoading ? (
-                <div className="flex gap-1 py-4 justify-center"><span className="loading-dot w-2 h-2 bg-[var(--mute)] inline-block" /><span className="loading-dot w-2 h-2 bg-[var(--mute)] inline-block" /><span className="loading-dot w-2 h-2 bg-[var(--mute)] inline-block" /></div>
-              ) : trending.length > 0 ? (
-                <div className="space-y-[4px]">
-                  {trending.slice(0, 8).map((t, i) => (
-                    <button key={t.address || i} onClick={() => { setMintInput(prev => prev ? prev + '\n' + t.address : t.address); setMode('patterns') }} className="w-full text-left flex items-center justify-between px-[8px] py-[6px] text-[15px] hover:bg-[var(--surface-soft)] transition-colors rounded-sm">
-                      <div className="min-w-0 flex-1"><span className="font-bold truncate block">{t.symbol || t.name || t.address.slice(0, 8)}</span><span className="text-[12px] text-[var(--mute)] truncate block font-mono">{t.address.slice(0, 12)}...</span></div>
-                      <span className="text-[12px] text-[var(--mute)] ml-2">{t.mc ? `$${(t.mc / 1000).toFixed(0)}k` : ''}</span>
-                    </button>
-                  ))}
-                </div>
-              ) : <p className="text-[14px] text-[var(--mute)] text-center py-2">No trending data</p>}
-            </div>
             <div className="border border-[var(--hairline)] rounded-sm" style={{ padding: '24px' }}>
               <div className="flex items-center gap-[8px] mb-[16px]"><div className="w-3 h-3 bg-[var(--ink)] shrink-0" /><span className="text-[14px] font-bold uppercase">SCORING</span></div>
               <p className="text-[15px] text-[var(--body)]">0–35 <strong>bearish</strong> · 35–65 <strong>neutral</strong> · 65+ <strong>bullish</strong></p>

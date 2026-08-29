@@ -112,41 +112,11 @@ export function analyzePatterns(results: AnalysisResult[]): PatternAnalysis {
   const deployerProfiles = Array.from(deployerMap.values())
     .sort((a, b) => b.tokensLaunched - a.tokensLaunched)
 
-  // 1b. Build token details (wash trading, whale concentration, etc.)
-  const tokenDetails: TokenDetail[] = results.map(r => {
-    // Get top 20 holders by amount — use what we have from the holders array
-    const topHolders = r.holders.slice(0, 20)
-    const whales = topHolders.filter(h => h.percentage >= 5)
-    const whaleConcentration = whales.reduce((s, h) => s + h.percentage, 0)
-
-    // Early buyers = non-deployer holders in top 20
-    const earlyBuyers = r.holders.filter(h => !h.isDeployer && h.percentage > 0)
-    const earlyBuyerCount = earlyBuyers.length
-
-    // Smart money = early buyers that also appear in other tokens in this batch
-    const smartMoneyCount = holderClusters.filter(h =>
-      earlyBuyers.some(e => e.address === h.address)
-    ).length
-
-    // Real volume estimation — if no data, null
-    const realVolume = null
-
-    return {
-      mint: r.mint,
-      washTradingScore: 0, // DexScreener holder data isn't always available
-      whaleConcentration: Math.round(whaleConcentration * 10) / 10,
-      realVolume,
-      creatorFees: null, // DexScreener doesn't expose creator fees
-      maxMc: null, // would need historical OHLCV
-      smartMoneyCount,
-      earlyBuyerCount,
-    }
-  })
-
-  // 2. Find holder clusters — wallets that appear in multiple tokens
+  // 1b. Find holder clusters — wallets that appear in multiple tokens
+  // (built first so tokenDetails can reference it for smart money counts)
   const holderMap = new Map<string, HolderCluster>()
   for (const r of results) {
-    // Early buyers = within top 20 holders that aren't deployer
+    // Early buyers = within top 10 holders that aren't deployer
     const early = r.holders
       .filter(h => !h.isDeployer)
       .slice(0, 10)
@@ -172,6 +142,34 @@ export function analyzePatterns(results: AnalysisResult[]): PatternAnalysis {
     .filter(h => h.appearsIn >= 2) // only wallets in 2+ tokens
     .sort((a, b) => b.appearsIn - a.appearsIn)
 
+  // 1c. Build token details (wash trading, whale concentration, etc.)
+  const tokenDetails: TokenDetail[] = results.map(r => {
+    const topHolders = r.holders.slice(0, 20)
+    const whales = topHolders.filter(h => h.percentage >= 5)
+    const whaleConcentration = whales.reduce((s, h) => s + h.percentage, 0)
+
+    // Early buyers = non-deployer holders in top 20
+    const earlyBuyers = r.holders.filter(h => !h.isDeployer && h.percentage > 0)
+    const earlyBuyerCount = earlyBuyers.length
+
+    // Smart money = early buyers that also appear in other tokens in this batch
+    const smartMoneyCount = holderClusters.filter(h =>
+      earlyBuyers.some(e => e.address === h.address)
+    ).length
+
+    return {
+      mint: r.mint,
+      washTradingScore: 0, // DexScreener holder data isn't always available
+      whaleConcentration: Math.round(whaleConcentration * 10) / 10,
+      realVolume: null,
+      creatorFees: null, // DexScreener doesn't expose creator fees
+      maxMc: null, // would need historical OHLCV
+      smartMoneyCount,
+      earlyBuyerCount,
+    }
+  })
+
+  // 3. Pairwise token similarity
   // 3. Pairwise token similarity
   const tokenSimilarities: TokenSimilarity[] = []
   const _successSet = new Set(successful.map(s => s.mint))
@@ -181,7 +179,7 @@ export function analyzePatterns(results: AnalysisResult[]): PatternAnalysis {
       const a = results[i], b = results[j]
       const aDeployer = a.holders.find(h => h.isDeployer)
       const bDeployer = b.holders.find(h => h.isDeployer)
-      const sharedDeployer = aDeployer && bDeployer && aDeployer.address === bDeployer.address
+      const sharedDeployer = aDeployer !== undefined && bDeployer !== undefined && aDeployer.address === bDeployer.address
 
       // Early buyer overlap
       const aBuyers = new Set(a.holders.filter(h => !h.isDeployer).slice(0, 20).map(h => h.address))
@@ -294,24 +292,14 @@ export function analyzePatterns(results: AnalysisResult[]): PatternAnalysis {
       riskLevel = 'high'
     }
 
-    // Derive timing from similar historical tokens
-    const similarTokens = tokenSimilarities
-      .filter(t => t.mintA === r.mint || t.mintB === r.mint)
-      .filter(t => t.similarityScore > 50)
-
-    let avgFirstPumpTime: string | null = null
-    let avgMultiplier: string | null = null
-    if (similarTokens.length > 0 && successfulCount > 0) {
-      avgFirstPumpTime = '~1-3h after launch (based on similar tokens)'
-      avgMultiplier = '2-5x potential (based on pattern similarity)'
-    }
-
+    // Historical pump timing/multiplier prediction requires OHLCV data we
+    // don't fetch — leave null instead of presenting made-up numbers.
     entrySignals.push({
       mint: r.mint,
       entryScore,
       suggestedEntry,
-      avgFirstPumpTime,
-      avgMultiplier,
+      avgFirstPumpTime: null,
+      avgMultiplier: null,
       riskLevel,
     })
   }

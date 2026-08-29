@@ -35,6 +35,7 @@ export async function searchToken(mint: string): Promise<DexToken | null> {
   try {
     const res = await fetch(`${BASE}/search?q=${mint}`, {
       headers: { accept: 'application/json' },
+      signal: AbortSignal.timeout(10_000),
     })
     const json = await res.json()
     if (!json?.pairs?.length) return null

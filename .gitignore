@@ -27,6 +27,8 @@ next-env.d.ts
 
 # === TESTING ===
 /coverage
+__pycache__/
+*.pyc
 
 # === IDE ===
 .idea/

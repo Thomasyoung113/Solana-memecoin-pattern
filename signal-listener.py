@@ -573,6 +573,59 @@ def scrape_channels():
             if micro.get("isSpot") and score >= 80:
                 emit_signal(mint, result, f"Channel Pattern ({channel})")
 
+# ---------- Autonomous Market Scanner (Spot New Coins on Its Own) ----------
+def scan_market_tokens():
+    """Autonomous Micro-Cap Spotter: Scans new Solana tokens on DexScreener profiles & boosts."""
+    if get_registered_count() < FOUNDATION_TARGET:
+        return
+
+    endpoints = [
+        "https://api.dexscreener.com/token-profiles/latest/v1",
+        "https://api.dexscreener.com/token-boosts/latest/v1",
+    ]
+    for url in endpoints:
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req, timeout=8) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+        except Exception:
+            continue
+
+        if not isinstance(data, list):
+            continue
+
+        for item in data:
+            if item.get("chainId") != "solana":
+                continue
+            mint = item.get("tokenAddress")
+            if not mint or not is_valid_mint(mint):
+                continue
+
+            # Anti-repetition check
+            if not register_seen(mint, "AutonomousScanner"):
+                continue
+
+            print(f"[autonomous-scan] Evaluating candidate: {mint[:12]}...")
+            result = analyze_token(mint)
+            if not result:
+                continue
+
+            micro = result.get("microCapSpot") or {}
+            score = result.get("overallScore", 0)
+
+            # Check for smart wallet overlap learned from foundation
+            holders = result.get("holders") or []
+            smart_matches = [
+                h.get("address") or h.get("owner")
+                for h in holders
+                if (h.get("address") or h.get("owner")) in SMART_WALLETS
+            ]
+
+            is_micro_spot = micro.get("isSpot", False)
+            if (is_micro_spot and score >= 80) or (len(smart_matches) >= 1 and score >= 75):
+                source_label = f"Autonomous Engine Scanner (Smart Money Matched: {len(smart_matches)})" if smart_matches else "Autonomous Engine Micro-Cap Scanner"
+                emit_signal(mint, result, source_label)
+
 # ---------- Bootstrap 100 CAs if needed ----------
 def bootstrap_foundation():
     """Paginates back to quickly populate the 100 CA foundation baseline if under threshold."""
@@ -585,7 +638,7 @@ def bootstrap_foundation():
 
     for channel in CHANNELS:
         before_id = ""
-        for _ in range(5):
+        for page_idx in range(12):
             if get_registered_count() >= FOUNDATION_TARGET:
                 break
             url = f"https://t.me/s/{channel}{f'?before={before_id}' if before_id else ''}"
@@ -604,18 +657,25 @@ def bootstrap_foundation():
             if not msgs:
                 break
 
+            # The oldest post on the page is msgs[0] — paginate backward in time!
+            first_post_num = msgs[0][0].split("/")[-1]
+            before_id = first_post_num
+
             for post_id, text_html in msgs:
                 clean_text = html.unescape(re.sub(r"<[^>]+>", " ", text_html)).strip()
                 mint = extract_mint(clean_text)
                 if mint:
                     register_seen(mint, channel)
-                post_num = post_id.split("/")[-1]
-                before_id = post_num
 
-            time.sleep(1)
+            count_now = get_registered_count()
+            print(f"   [{channel}] Page {page_idx + 1}: {count_now}/{FOUNDATION_TARGET} CAs registered")
+            time.sleep(0.5)
 
     final_count = get_registered_count()
-    print(f"🎉 Foundation Bootstrapped: {final_count} CAs registered. Pattern engine is ACTIVE!")
+    if final_count >= FOUNDATION_TARGET:
+        print(f"🎉 Foundation of 100 CAs REACHED! ({final_count}/{FOUNDATION_TARGET}). Smart money patterns active. Live scanning & signal generation ONLINE!")
+    else:
+        print(f"ℹ️ Foundation at {final_count}/{FOUNDATION_TARGET} CAs. Will reach 100 via incoming stream.")
 
 # ---------- Main Loop ----------
 def main():
@@ -630,14 +690,20 @@ def main():
     bootstrap_foundation()
 
     last_outcome_check = 0
+    last_autonomous_scan = 0
 
     while True:
         try:
             # Step A: Scrape channels and register new CAs
             scrape_channels()
 
-            # Step B: Track active signals and notify outcomes (Hit 2x or Missed)
+            # Step B: Autonomous market scanning once foundation (100 CAs) is reached
             now = time.time()
+            if get_registered_count() >= FOUNDATION_TARGET and now - last_autonomous_scan >= 30:
+                scan_market_tokens()
+                last_autonomous_scan = now
+
+            # Step C: Track active signals and notify outcomes (Hit 2x or Missed)
             if now - last_outcome_check >= OUTCOME_CHECK_INTERVAL:
                 track_active_signals_outcome()
                 last_outcome_check = now

@@ -1,19 +1,19 @@
 #!/usr/bin/env python3
-"""Zero-Telethon Web Signal Listener & Autonomous Pattern Spotter
-================================================================
-1. Foundation Learning:
-   - Scrapes public Telegram channels (FrankCowpergang, HumbleApes) via https://t.me/s/<channel>.
-   - Identifies early buyers / smart money wallets and winning deployers.
-   - Learns signatures of successful micro-cap runners.
+"""Solana Memecoin Pattern Scanner & Follow-Up Engine
+===================================================
+1. Foundation Phase:
+   - Registers 100 CAs from channel history to build the ground-truth pattern foundation.
+   - Extracts smart money wallets and winning deployers.
 
-2. Autonomous Engine:
-   - Scans fresh Solana tokens directly from DexScreener on its own.
-   - Cross-references holders with smart money wallets learned from the foundation.
-   - Spots new tokens at $8k–$15k MC before the Telegram channels even post them!
+2. Pattern Signals:
+   - Evaluates fresh micro-caps ($8k–$15k entry) against learned patterns.
+   - Requires revoked authorities, dev bag <= 8%, and 5m buyer velocity.
+   - Prevents duplicate alerts (zero CA repetition).
 
-3. Strict Anti-Repetition & Delivery:
-   - Uses atomic SQLite + in-memory dual-gate tracking. Never repeats a contract address!
-   - Broadcasts distinguished alerts directly to TELEGRAM_CHANNEL_ID (-1004496424538).
+3. Outcome Accountability (Follow-up Notifications):
+   - Actively monitors every signal sent!
+   - 🎯 Sends NOTIFICATION when it HITS 2X ($20k MC or 2x entry).
+   - ❌ Sends NOTIFICATION if it DID NOT HIT (drops >=45% or times out).
 """
 import html
 import json
@@ -25,7 +25,8 @@ import time
 import urllib.parse
 import urllib.request
 
-# Load environment variables (.env.local, .env, or memecoin-alert-bot/.env)
+FOUNDATION_TARGET = 100
+
 def load_env():
     candidates = [
         os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env.local"),
@@ -50,13 +51,12 @@ ENV = load_env()
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
-# Targeted Channel ID: -1004496424538 (t.me/thomasgem)
 TELEGRAM_CHANNEL_ID = os.getenv("TELEGRAM_CHANNEL_ID", "-1004496424538")
 ANALYZER_URL = os.getenv("ANALYZER_URL", "http://localhost:3000")
 
 CHANNELS = ["FrankCowpergang", "HumbleApes"]
 CHANNEL_POLL_INTERVAL = 6
-AUTONOMOUS_POLL_INTERVAL = 12
+OUTCOME_CHECK_INTERVAL = 20
 
 DB_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "signals.db")
 
@@ -66,7 +66,6 @@ URL_MINT = re.compile(
     r"([1-9A-HJ-NP-Za-km-z]{32,44})"
 )
 
-# ---------- Base58 validation ----------
 B58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
 
 def is_valid_mint(s: str) -> bool:
@@ -93,7 +92,7 @@ def extract_mint(text: str) -> str | None:
             seen.append(c)
     return seen[-1] if seen else None
 
-# ---------- Database & Strict Anti-Repetition Setup ----------
+# ---------- Database Initialization ----------
 db = sqlite3.connect(DB_FILE)
 db.executescript(
     """
@@ -105,40 +104,40 @@ db.executescript(
         score REAL,
         category TEXT
     );
-    CREATE TABLE IF NOT EXISTS alerted (
+    CREATE TABLE IF NOT EXISTS tracked_signals (
         mint TEXT PRIMARY KEY,
+        symbol TEXT,
+        name TEXT,
+        entry_mc REAL,
+        target_2x_mc REAL,
         alerted_at INTEGER,
         channel_id TEXT,
-        source TEXT,
-        category TEXT,
-        mc REAL
+        last_checked INTEGER,
+        peak_mc REAL,
+        current_mc REAL,
+        status TEXT, -- 'ACTIVE', 'HIT_2X', 'DID_NOT_HIT'
+        outcome_notified INTEGER DEFAULT 0
     );
     CREATE TABLE IF NOT EXISTS smart_wallets (
         address TEXT PRIMARY KEY,
         source_channel TEXT,
         tokens_count INTEGER DEFAULT 1,
-        last_seen INTEGER
-    );
-    CREATE TABLE IF NOT EXISTS trusted_deployers (
-        address TEXT PRIMARY KEY,
-        tokens_launched INTEGER DEFAULT 1,
-        winning_tokens INTEGER DEFAULT 0,
+        winning_count INTEGER DEFAULT 0,
         last_seen INTEGER
     );
     """
 )
 db.commit()
 
-# Load all historical mints into in-memory sets for instant zero-repetition gating
 SEEN_MINTS = set(row[0] for row in db.execute("SELECT mint FROM seen").fetchall())
-ALERTED_MINTS = set(row[0] for row in db.execute("SELECT mint FROM alerted").fetchall())
+ALERTED_MINTS = set(row[0] for row in db.execute("SELECT mint FROM tracked_signals").fetchall())
 SMART_WALLETS = set(row[0] for row in db.execute("SELECT address FROM smart_wallets").fetchall())
 
-print(f"📦 Database loaded: {len(SEEN_MINTS)} seen CAs, {len(ALERTED_MINTS)} alerted CAs, {len(SMART_WALLETS)} learned smart wallets.")
+def get_registered_count() -> int:
+    return db.execute("SELECT COUNT(*) FROM seen").fetchone()[0]
 
 def register_seen(mint: str, channel: str, msg_id: int = 0) -> bool:
-    """Atomic check and register. Returns False if already seen (blocks repetition)."""
-    if mint in SEEN_MINTS or mint in ALERTED_MINTS:
+    if mint in SEEN_MINTS:
         return False
     SEEN_MINTS.add(mint)
     try:
@@ -151,30 +150,7 @@ def register_seen(mint: str, channel: str, msg_id: int = 0) -> bool:
         pass
     return True
 
-def record_analysis_result(mint: str, score: float, category: str):
-    try:
-        db.execute(
-            "UPDATE seen SET score = ?, category = ? WHERE mint = ?",
-            (score, category, mint),
-        )
-        db.commit()
-    except Exception:
-        pass
-
-def register_alerted(mint: str, source: str, category: str, mc: float):
-    """Marks mint as alerted permanently across DB and memory."""
-    ALERTED_MINTS.add(mint)
-    try:
-        db.execute(
-            "INSERT OR REPLACE INTO alerted (mint, alerted_at, channel_id, source, category, mc) VALUES (?, ?, ?, ?, ?, ?)",
-            (mint, int(time.time()), TELEGRAM_CHANNEL_ID, source, category, mc),
-        )
-        db.commit()
-    except Exception:
-        pass
-
 def learn_smart_wallets(holders: list, channel: str):
-    """Learn smart money wallets from channel signals to train the autonomous engine."""
     if not holders:
         return
     now = int(time.time())
@@ -199,9 +175,41 @@ def learn_smart_wallets(holders: list, channel: str):
     except Exception:
         pass
 
-# ---------- Token Analyzer Integration ----------
+# ---------- Telegram Bot Delivery ----------
+def send_telegram(text: str):
+    if not TELEGRAM_BOT_TOKEN:
+        print("[broadcast-terminal] No bot token configured")
+        return
+
+    targets = []
+    if TELEGRAM_CHANNEL_ID:
+        targets.append(TELEGRAM_CHANNEL_ID)
+    if TELEGRAM_CHAT_ID and TELEGRAM_CHAT_ID not in targets:
+        targets.append(TELEGRAM_CHAT_ID)
+
+    for target in targets:
+        try:
+            url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+            payload = {
+                "chat_id": target,
+                "text": text,
+                "parse_mode": "Markdown",
+                "disable_web_page_preview": True,
+            }
+            req = urllib.request.Request(
+                url,
+                data=json.dumps(payload).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+            )
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                if resp.status == 200:
+                    print(f"[telegram-sent] -> {target}")
+        except Exception as e:
+            print(f"[telegram-err] {target}: {e}")
+
+# ---------- Token Analysis (Local API or Dex/RugCheck) ----------
 def analyze_token(mint: str) -> dict | None:
-    # 1. First attempt via local Next.js analyzer API
+    # 1. Try local analyzer API
     try:
         url = f"{ANALYZER_URL}/api/analyze"
         req = urllib.request.Request(
@@ -211,12 +219,11 @@ def analyze_token(mint: str) -> dict | None:
         )
         with urllib.request.urlopen(req, timeout=12) as resp:
             if resp.status == 200:
-                data = json.loads(resp.read().decode("utf-8"))
-                return data
+                return json.loads(resp.read().decode("utf-8"))
     except Exception:
         pass
 
-    # 2. Resilient standalone fallback: direct DexScreener & RugCheck
+    # 2. Resilient standalone fallback
     try:
         dex_url = f"https://api.dexscreener.com/latest/dex/tokens/{mint}"
         dex_req = urllib.request.Request(dex_url, headers={"User-Agent": "Mozilla/5.0"})
@@ -231,7 +238,7 @@ def analyze_token(mint: str) -> dict | None:
         rc_req = urllib.request.Request(rc_url, headers={"User-Agent": "Mozilla/5.0"})
         with urllib.request.urlopen(rc_req, timeout=10) as resp:
             rc_data = json.loads(resp.read().decode("utf-8"))
-    except Exception as e:
+    except Exception:
         return None
 
     mc = float(pair.get("marketCap") or pair.get("fdv") or 0)
@@ -248,7 +255,6 @@ def analyze_token(mint: str) -> dict | None:
     mint_revoked = rc_data.get("mintAuthority") is None and (rc_data.get("token") or {}).get("mintAuthority") is None
     freeze_revoked = rc_data.get("freezeAuthority") is None and (rc_data.get("token") or {}).get("freezeAuthority") is None
 
-    # Check smart money overlap
     smart_overlap = [h for h in top_holders if (h.get("address") in SMART_WALLETS or h.get("owner") in SMART_WALLETS)]
 
     mc_in_range = 6_000 <= mc <= 22_000
@@ -299,33 +305,8 @@ def analyze_token(mint: str) -> dict | None:
         "redFlags": [],
     }
 
-# ---------- Classification & Formatting ----------
-def classify(result: dict) -> tuple[str, list[str], str]:
-    score = result.get("overallScore", 0)
-    flags = result.get("redFlags", [])
-    micro = result.get("microCapSpot") or {}
-    smart_count = result.get("smartMoneyCount", 0)
-
-    high = [f for f in flags if f.get("severity") in ("high", "critical")]
-    tags = []
-    if micro.get("isSpot"):
-        tags.append("#micro-cap-2x")
-    if (result.get("security") or {}).get("isBondingCurve"):
-        tags.append("#bonding-curve")
-    if smart_count > 0:
-        tags.append(f"#smart-money-{smart_count}")
-
-    if score < 35 or len(high) >= 2:
-        cat, emoji = "RUG-SHAPED", "🔴"
-    elif micro.get("isSpot") and not high:
-        cat, emoji = "QUICK 2X SPOT", "⚡"
-    elif score >= 70 and not high:
-        cat, emoji = "APEABLE", "🟢"
-    else:
-        cat, emoji = "GAMBLING", "🟡"
-    return cat, sorted(set(tags)), emoji
-
-def fmt_alert(result: dict, cat: str, channel: str, source_type: str = "CHANNEL") -> str:
+# ---------- Format Initial Signal Alert ----------
+def fmt_signal_alert(result: dict, source_desc: str) -> str:
     ov = result.get("overview") or {}
     micro = result.get("microCapSpot") or {}
     sec = result.get("security") or {}
@@ -347,16 +328,12 @@ def fmt_alert(result: dict, cat: str, channel: str, source_type: str = "CHANNEL"
     tp2 = micro.get("tp2_runner", {})
     smart_count = result.get("smartMoneyCount", 0)
 
-    if source_type == "AUTONOMOUS":
-        header = "⚡⚡ *[MICRO-CAP PATTERN SCANNER | AUTONOMOUS SPOT]* ⚡⚡\n🧠 *PRE-CHANNEL DISCOVERY* (Spotted by Engine)"
-    else:
-        header = f"⚡⚡ *[MICRO-CAP PATTERN SCANNER | CHANNEL FOUNDATION]* ⚡⚡\n🎯 *QUICK 2X SPOT DETECTED* (${mc:,.0f} MC Entry)"
-
     lines = [
-        header,
+        "⚡⚡ *[MICRO-CAP PATTERN SCANNER | SIGNAL ACTIVE]* ⚡⚡",
+        f"🎯 *NEW QUICK 2X SPOT* (${mc:,.0f} MC Entry)",
         "",
         f"🪙 *${symbol}* {f'({name})' if name else ''}",
-        f"📊 *Market Cap:* ${mc:,.0f} (Micro-Cap Phase)",
+        f"📊 *Entry Market Cap:* ${mc:,.0f}",
         f"💧 *Liquidity:* {liq_str}",
         "",
         f"🎯 *TP1 (Quick 2x Take-Profit):* {tp1.get('targetDisplay', '$20k–$25k MC')} ({tp1.get('potentialGain', '2.0x')})",
@@ -369,7 +346,7 @@ def fmt_alert(result: dict, cat: str, channel: str, source_type: str = "CHANNEL"
     ]
 
     if smart_count > 0:
-        lines.append(f"🧠 *Smart Money Match:* {smart_count} learned wallet(s) from channel foundation holding!")
+        lines.append(f"🧠 *Smart Money Match:* {smart_count} learned wallet(s) from foundation in top holders!")
 
     lines.extend([
         f"🔬 *Pattern Score:* {result.get('overallScore', 0)}/100 (BULLISH RUNNER)",
@@ -377,65 +354,186 @@ def fmt_alert(result: dict, cat: str, channel: str, source_type: str = "CHANNEL"
         f"CA: `{mint}`",
         f"Dex: https://dexscreener.com/solana/{mint}",
         f"RugCheck: https://rugcheck.xyz/tokens/{mint}",
-        f"📡 Source: {channel}",
+        f"📡 Source: {source_desc}",
+        "",
+        "⏳ _Engine is actively tracking this signal. Outcome notification will fire when 2x hits or fails._",
     ])
     return "\n".join(lines)
 
-# ---------- Telegram Bot Broadcast (Strict Zero Repetition) ----------
-def broadcast_alert(mint: str, alert_text: str, source: str, category: str, mc: float):
-    # Strict anti-repetition check
+# ---------- Format Follow-Up Outcome Notifications ----------
+def fmt_hit_2x_alert(sig: dict, peak_mc: float, current_mc: float) -> str:
+    entry = sig["entry_mc"]
+    symbol = sig["symbol"]
+    mint = sig["mint"]
+    gain_pct = ((peak_mc - entry) / entry) * 100 if entry > 0 else 0
+    mult = peak_mc / entry if entry > 0 else 0
+    elapsed_m = max(1, int((time.time() - sig["alerted_at"]) / 60))
+
+    lines = [
+        "🎯🎯 *[2X TARGET HIT!]* 🎯🎯",
+        f"🪙 *${symbol}* — *PROFIT ACHIEVED!*",
+        "",
+        f"💰 *Entry Market Cap:* ${entry:,.0f}",
+        f"🚀 *Peak Market Cap:* ${peak_mc:,.0f} (*+{gain_pct:.0f}%* | *{mult:.1f}x*)",
+        f"📊 *Current Market Cap:* ${current_mc:,.0f}",
+        f"⏱️ *Time to 2x:* {elapsed_m} minutes",
+        "",
+        "✅ *TP1 TARGET HIT ($20k+ MC):*",
+        "   └ Initial capital secured / 2x profit locked!",
+        "   └ If holding moonbag, target TP2 ($50k–$100k graduation).",
+        "",
+        f"CA: `{mint}`",
+        f"Dex: https://dexscreener.com/solana/{mint}",
+    ]
+    return "\n".join(lines)
+
+def fmt_missed_alert(sig: dict, current_mc: float, reason: str) -> str:
+    entry = sig["entry_mc"]
+    symbol = sig["symbol"]
+    mint = sig["mint"]
+    drop_pct = ((current_mc - entry) / entry) * 100 if entry > 0 else 0
+    elapsed_m = max(1, int((time.time() - sig["alerted_at"]) / 60))
+
+    lines = [
+        "❌ *[SIGNAL OUTCOME: DID NOT HIT 2X]*",
+        f"🪙 *${symbol}* — *CLOSED*",
+        "",
+        f"💰 *Entry Market Cap:* ${entry:,.0f}",
+        f"📉 *Current Market Cap:* ${current_mc:,.0f} (*{drop_pct:.0f}%*)",
+        f"⏱️ *Time Elapsed:* {elapsed_m} minutes",
+        f"⚠️ *Outcome Reason:* {reason}",
+        "",
+        "🛑 *Action:* Position marked closed / stopped out.",
+        "",
+        f"CA: `{mint}`",
+        f"Dex: https://dexscreener.com/solana/{mint}",
+    ]
+    return "\n".join(lines)
+
+# ---------- Signal Broadcaster with Strict Zero-Repetition Gate ----------
+def emit_signal(mint: str, result: dict, source_desc: str):
     if mint in ALERTED_MINTS:
-        print(f"[skip-repeat] {mint} already alerted previously")
+        return
+    ALERTED_MINTS.add(mint)
+
+    ov = result.get("overview") or {}
+    symbol = ov.get("symbol") or "Unknown"
+    name = ov.get("name") or ""
+    entry_mc = float(ov.get("mc") or 0)
+    target_2x_mc = max(20_000.0, entry_mc * 2.0)
+    now = int(time.time())
+
+    # Register into tracked_signals table permanently
+    try:
+        db.execute(
+            """INSERT OR REPLACE INTO tracked_signals
+               (mint, symbol, name, entry_mc, target_2x_mc, alerted_at, channel_id, last_checked, peak_mc, current_mc, status, outcome_notified)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVE', 0)""",
+            (mint, symbol, name, entry_mc, target_2x_mc, now, TELEGRAM_CHANNEL_ID, now, entry_mc, entry_mc),
+        )
+        db.commit()
+    except Exception as e:
+        print(f"[db-tracked-err] {e}")
+
+    alert_text = fmt_signal_alert(result, source_desc)
+    send_telegram(alert_text)
+    print(f"\n📢 [SIGNAL-BROADCAST] ${symbol} (CA: {mint}) -> Sent to {TELEGRAM_CHANNEL_ID}")
+
+# ---------- Continuous Follow-Up Tracker (Hit 2x or Did Not Hit) ----------
+def track_active_signals_outcome():
+    rows = db.execute(
+        """SELECT mint, symbol, name, entry_mc, target_2x_mc, alerted_at, channel_id, peak_mc, current_mc
+           FROM tracked_signals
+           WHERE status = 'ACTIVE' AND outcome_notified = 0"""
+    ).fetchall()
+
+    if not rows:
         return
 
-    # Mark as alerted before sending
-    register_alerted(mint, source, category, mc)
+    now = int(time.time())
 
-    if not TELEGRAM_BOT_TOKEN:
-        print(f"[broadcast-terminal-only] {mint}")
-        return
+    for row in rows:
+        mint = row[0]
+        sig = {
+            "mint": mint,
+            "symbol": row[1],
+            "name": row[2],
+            "entry_mc": row[3],
+            "target_2x_mc": row[4],
+            "alerted_at": row[5],
+            "channel_id": row[6],
+            "peak_mc": row[7],
+            "current_mc": row[8],
+        }
 
-    targets = []
-    if TELEGRAM_CHANNEL_ID:
-        targets.append(TELEGRAM_CHANNEL_ID)
-    if TELEGRAM_CHAT_ID and TELEGRAM_CHAT_ID not in targets:
-        targets.append(TELEGRAM_CHAT_ID)
-
-    for target in targets:
+        # Fetch current real-time DexScreener MC
         try:
-            url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-            payload = {
-                "chat_id": target,
-                "text": alert_text,
-                "parse_mode": "Markdown",
-                "disable_web_page_preview": True,
-            }
-            req = urllib.request.Request(
-                url,
-                data=json.dumps(payload).encode("utf-8"),
-                headers={"Content-Type": "application/json"},
-            )
+            url = f"https://api.dexscreener.com/latest/dex/tokens/{mint}"
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
             with urllib.request.urlopen(req, timeout=10) as resp:
-                if resp.status == 200:
-                    print(f"[alert-sent] -> Channel/Chat {target} ({mint})")
-        except Exception as e:
-            print(f"[alert-fail] {target}: {e}")
+                data = json.loads(resp.read().decode("utf-8"))
+            pairs = data.get("pairs") or []
+            if not pairs:
+                continue
+            pair = pairs[0]
+            current_mc = float(pair.get("marketCap") or pair.get("fdv") or 0)
+        except Exception:
+            continue
 
-# ---------- Channel Scraper Loop (Foundation Feeder) ----------
-def scrape_telegram_channels():
+        entry_mc = sig["entry_mc"]
+        peak_mc = max(sig["peak_mc"], current_mc)
+        elapsed_mins = (now - sig["alerted_at"]) / 60
+
+        # Update peak and current MC in DB
+        db.execute(
+            "UPDATE tracked_signals SET current_mc = ?, peak_mc = ?, last_checked = ? WHERE mint = ?",
+            (current_mc, peak_mc, now, mint),
+        )
+        db.commit()
+
+        # 1. CHECK HIT 2X CONDITION
+        # Hits $20,000 MC or 2.0x from entry
+        if peak_mc >= 20_000 or (entry_mc > 0 and peak_mc >= entry_mc * 2.0):
+            print(f"\n🎯 [OUTCOME: 2X HIT!] ${sig['symbol']} reached ${peak_mc:,.0f} MC ({peak_mc/entry_mc:.1f}x)")
+            db.execute(
+                "UPDATE tracked_signals SET status = 'HIT_2X', outcome_notified = 1 WHERE mint = ?",
+                (mint,),
+            )
+            db.commit()
+
+            alert_text = fmt_hit_2x_alert(sig, peak_mc, current_mc)
+            send_telegram(alert_text)
+            continue
+
+        # 2. CHECK DID NOT HIT CONDITION
+        # Dumped >= 45% from entry, or 60 minutes elapsed with no 2x
+        is_dumped = entry_mc > 0 and current_mc <= entry_mc * 0.55
+        is_timeout = elapsed_mins >= 60
+
+        if is_dumped or is_timeout:
+            reason = "Price dropped >45% below entry" if is_dumped else "60m elapsed without 2x momentum"
+            print(f"\n❌ [OUTCOME: DID NOT HIT] ${sig['symbol']} -> {reason} (${current_mc:,.0f} MC)")
+            db.execute(
+                "UPDATE tracked_signals SET status = 'DID_NOT_HIT', outcome_notified = 1 WHERE mint = ?",
+                (mint,),
+            )
+            db.commit()
+
+            alert_text = fmt_missed_alert(sig, current_mc, reason)
+            send_telegram(alert_text)
+
+# ---------- Channel Scraper & Foundation Builder ----------
+def scrape_channels():
     for channel in CHANNELS:
         url = f"https://t.me/s/{channel}"
         try:
             req = urllib.request.Request(
                 url,
-                headers={
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                    "Accept-Language": "en-US,en;q=0.9",
-                },
+                headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"},
             )
             with urllib.request.urlopen(req, timeout=12) as resp:
                 page = resp.read().decode("utf-8")
-        except Exception as e:
+        except Exception:
             continue
 
         msgs = re.findall(
@@ -450,104 +548,105 @@ def scrape_telegram_channels():
             if not mint:
                 continue
 
-            # Strict instant deduplication: skip if seen or alerted
+            # Anti-repetition check
             if not register_seen(mint, channel):
                 continue
 
-            print(f"\n[channel-signal] {mint} from {post_id}")
+            registered_count = get_registered_count()
+            print(f"[registered] {mint[:12]}... from {post_id} | Total Foundation: {registered_count}/{FOUNDATION_TARGET}")
+
             result = analyze_token(mint)
             if not result:
-                record_analysis_result(mint, 0.0, "ANALYZE_FAIL")
                 continue
 
-            cat, tags, emoji = classify(result)
+            # Learn smart money from channel tokens
+            learn_smart_wallets(result.get("holders") or [], channel)
+
+            # Check if foundation threshold is met
+            if registered_count < FOUNDATION_TARGET:
+                # Still building foundation: log progress
+                continue
+
+            # Once 100 CAs foundation is registered, emit verified signals!
+            micro = result.get("microCapSpot") or {}
             score = result.get("overallScore", 0)
-            record_analysis_result(mint, score, cat)
+            if micro.get("isSpot") and score >= 80:
+                emit_signal(mint, result, f"Channel Pattern ({channel})")
 
-            # Learn smart money wallets from this channel token to train autonomous engine
-            holders = result.get("holders") or []
-            learn_smart_wallets(holders, channel)
-
-            ov = result.get("overview") or {}
-            mc = ov.get("mc") or 0
-            sym = ov.get("symbol") or mint[:8]
-            print(f" -> {sym} | MC ${mc:,.0f} | Cat: {cat} (Score: {score})")
-
-            # Broadcast if Quick 2x Spot
-            if cat in ("QUICK 2X SPOT", "APEABLE"):
-                alert_text = fmt_alert(result, cat, f"{channel} ({post_id})", source_type="CHANNEL")
-                broadcast_alert(mint, alert_text, channel, cat, mc)
-
-# ---------- Autonomous Engine Loop (Spots New Coins On Its Own) ----------
-def run_autonomous_scanner():
-    """Directly scans fresh Solana token profiles to spot micro-caps matching smart money and patterns."""
-    try:
-        url = "https://api.dexscreener.com/token-profiles/latest/v1"
-        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            profiles = json.loads(resp.read().decode("utf-8"))
-    except Exception:
+# ---------- Bootstrap 100 CAs if needed ----------
+def bootstrap_foundation():
+    """Paginates back to quickly populate the 100 CA foundation baseline if under threshold."""
+    current_count = get_registered_count()
+    if current_count >= FOUNDATION_TARGET:
+        print(f"✅ Foundation Baseline Ready: {current_count}/{FOUNDATION_TARGET} CAs registered.")
         return
 
-    sol_profiles = [p for p in profiles if p.get("chainId") == "solana"]
+    print(f"⏳ Bootstrapping Foundation: {current_count}/{FOUNDATION_TARGET} CAs currently registered. Fetching channel history...")
 
-    for prof in sol_profiles:
-        mint = prof.get("tokenAddress")
-        if not mint or len(mint) < 32:
-            continue
+    for channel in CHANNELS:
+        before_id = ""
+        for _ in range(5):
+            if get_registered_count() >= FOUNDATION_TARGET:
+                break
+            url = f"https://t.me/s/{channel}{f'?before={before_id}' if before_id else ''}"
+            try:
+                req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    page = resp.read().decode("utf-8")
+            except Exception:
+                break
 
-        # Strict instant deduplication
-        if not register_seen(mint, "AutonomousScanner"):
-            continue
+            msgs = re.findall(
+                r'<div class="tgme_widget_message[^"]*"[^>]*data-post="([^"]+)".*?<div class="tgme_widget_message_text[^"]*"[^>]*>(.*?)</div>\s*</div>',
+                page,
+                re.DOTALL,
+            )
+            if not msgs:
+                break
 
-        result = analyze_token(mint)
-        if not result:
-            record_analysis_result(mint, 0.0, "ANALYZE_FAIL")
-            continue
+            for post_id, text_html in msgs:
+                clean_text = html.unescape(re.sub(r"<[^>]+>", " ", text_html)).strip()
+                mint = extract_mint(clean_text)
+                if mint:
+                    register_seen(mint, channel)
+                post_num = post_id.split("/")[-1]
+                before_id = post_num
 
-        cat, tags, emoji = classify(result)
-        score = result.get("overallScore", 0)
-        record_analysis_result(mint, score, cat)
+            time.sleep(1)
 
-        ov = result.get("overview") or {}
-        mc = ov.get("mc") or 0
-        smart_count = result.get("smartMoneyCount", 0)
-
-        # Autonomous spot triggers if it meets Quick 2x criteria (especially if smart money is on it!)
-        if cat == "QUICK 2X SPOT" and mc <= 20_000:
-            sym = ov.get("symbol") or mint[:8]
-            print(f"\n⚡ [AUTONOMOUS SPOT] {sym} (${mc:,.0f} MC) | Smart Money: {smart_count}")
-            alert_text = fmt_alert(result, cat, "Autonomous Engine (Pre-Channel)", source_type="AUTONOMOUS")
-            broadcast_alert(mint, alert_text, "AutonomousScanner", cat, mc)
+    final_count = get_registered_count()
+    print(f"🎉 Foundation Bootstrapped: {final_count} CAs registered. Pattern engine is ACTIVE!")
 
 # ---------- Main Loop ----------
 def main():
-    print(f"🚀 Dual-Engine Memecoin Pattern System Active!")
-    print(f"📡 Channel Foundation: {CHANNELS}")
-    print(f"🧠 Autonomous Scanner: Active (Monitoring fresh Solana mints & smart money)")
-    print(f"📢 Target Channel ID: {TELEGRAM_CHANNEL_ID} (https://t.me/thomasgem)")
-    print(f"🛡️ Strict Anti-Repetition: Enabled (Zero duplicate CAs)")
-    print(f"🎯 Profit Targets: TP1 @ $20k MC (Quick 2x scalp) | TP2 @ $50k–$100k MC (Runner)")
+    print("=" * 65)
+    print("🚀 Solana Memecoin Pattern Scanner & Follow-Up Engine")
+    print(f"📢 Target Telegram Channel: {TELEGRAM_CHANNEL_ID} (https://t.me/thomasgem)")
+    print(f"🎯 Target Rule: Micro-Cap Entry ($8k–$15k) -> TP1 @ $20k MC (Quick 2x)")
+    print(f"🔔 Follow-up Notifications: ACTIVE (Notifies on 2x Hit or Miss)")
     print("=" * 65)
 
-    last_auto_scan = 0
+    # 1. Bootstrap 100 CAs foundation
+    bootstrap_foundation()
+
+    last_outcome_check = 0
 
     while True:
         try:
-            # 1. Scrape channels to learn smart money and catch calls
-            scrape_telegram_channels()
+            # Step A: Scrape channels and register new CAs
+            scrape_channels()
 
-            # 2. Run autonomous scanner periodically
+            # Step B: Track active signals and notify outcomes (Hit 2x or Missed)
             now = time.time()
-            if now - last_auto_scan >= AUTONOMOUS_POLL_INTERVAL:
-                run_autonomous_scanner()
-                last_auto_scan = now
+            if now - last_outcome_check >= OUTCOME_CHECK_INTERVAL:
+                track_active_signals_outcome()
+                last_outcome_check = now
 
         except KeyboardInterrupt:
-            print("\nShutting down listener...")
+            print("\nShutting down engine...")
             break
         except Exception as e:
-            print(f"[engine-err] {e}")
+            print(f"[loop-err] {e}")
 
         time.sleep(CHANNEL_POLL_INTERVAL)
 

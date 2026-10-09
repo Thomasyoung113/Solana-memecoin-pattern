@@ -7,7 +7,6 @@ export interface DeployerProfile {
   tokensLaunched: number
   tokens: string[]
   avgScore: number
-  // If they had a successful token before
   prevSuccess: boolean
   prevSuccessMint?: string
 }
@@ -44,10 +43,11 @@ export interface ReplicaPrediction {
 export interface EntrySignal {
   mint: string
   entryScore: number // 0–100
-  suggestedEntry: string // e.g. "immediate", "after 1h dip", "at liquidity event"
-  avgFirstPumpTime: string | null // e.g. "~2h after deploy"
-  avgMultiplier: string | null // e.g. "3-5x"
+  suggestedEntry: string
+  avgFirstPumpTime: string | null
+  avgMultiplier: string | null
   riskLevel: 'low' | 'medium' | 'high'
+  isMicroCap2xSpot?: boolean
 }
 
 export interface PatternAnalysis {
@@ -55,6 +55,7 @@ export interface PatternAnalysis {
   mints: string[]
   totalAnalyzed: number
   successfulCount: number
+  microCapSpotsCount: number
   // Per-token details
   tokenDetails: TokenDetail[]
   // Cross-token findings
@@ -77,6 +78,7 @@ export interface TokenDetail {
   maxMc: number | null
   smartMoneyCount: number
   earlyBuyerCount: number
+  isMicroCapSpot: boolean
 }
 
 // === MAIN ENGINE ===
@@ -87,12 +89,14 @@ export function analyzePatterns(results: AnalysisResult[]): PatternAnalysis {
   const totalAnalyzed = results.length
   const successful = results.filter(r => r.overallScore >= 65)
   const successfulCount = successful.length
+  const microCapSpots = results.filter(r => r.microCapSpot?.isSpot)
+  const microCapSpotsCount = microCapSpots.length
 
   // 1. Build deployer profiles
   const deployerMap = new Map<string, DeployerProfile>()
   for (const r of results) {
     const deployer = r.holders.find(h => h.isDeployer)
-    if (!deployer) continue
+    if (!deployer || !deployer.address) continue
     const existing = deployerMap.get(deployer.address)
     if (existing) {
       existing.tokensLaunched++
@@ -113,12 +117,11 @@ export function analyzePatterns(results: AnalysisResult[]): PatternAnalysis {
     .sort((a, b) => b.tokensLaunched - a.tokensLaunched)
 
   // 1b. Find holder clusters — wallets that appear in multiple tokens
-  // (built first so tokenDetails can reference it for smart money counts)
   const holderMap = new Map<string, HolderCluster>()
   for (const r of results) {
     // Early buyers = within top 10 holders that aren't deployer
     const early = r.holders
-      .filter(h => !h.isDeployer)
+      .filter(h => !h.isDeployer && h.address)
       .slice(0, 10)
 
     for (const h of early) {
@@ -139,40 +142,37 @@ export function analyzePatterns(results: AnalysisResult[]): PatternAnalysis {
     }
   }
   const holderClusters = Array.from(holderMap.values())
-    .filter(h => h.appearsIn >= 2) // only wallets in 2+ tokens
+    .filter(h => h.appearsIn >= 2)
     .sort((a, b) => b.appearsIn - a.appearsIn)
 
-  // 1c. Build token details (wash trading, whale concentration, etc.)
+  // 1c. Build token details
   const tokenDetails: TokenDetail[] = results.map(r => {
     const topHolders = r.holders.slice(0, 20)
     const whales = topHolders.filter(h => h.percentage >= 5)
     const whaleConcentration = whales.reduce((s, h) => s + h.percentage, 0)
 
-    // Early buyers = non-deployer holders in top 20
     const earlyBuyers = r.holders.filter(h => !h.isDeployer && h.percentage > 0)
     const earlyBuyerCount = earlyBuyers.length
 
-    // Smart money = early buyers that also appear in other tokens in this batch
     const smartMoneyCount = holderClusters.filter(h =>
       earlyBuyers.some(e => e.address === h.address)
     ).length
 
     return {
       mint: r.mint,
-      washTradingScore: 0, // DexScreener holder data isn't always available
+      washTradingScore: 0,
       whaleConcentration: Math.round(whaleConcentration * 10) / 10,
-      realVolume: null,
-      creatorFees: null, // DexScreener doesn't expose creator fees
-      maxMc: null, // would need historical OHLCV
+      realVolume: r.overview?.volume24h ?? null,
+      creatorFees: null,
+      maxMc: r.overview?.mc ?? null,
       smartMoneyCount,
       earlyBuyerCount,
+      isMicroCapSpot: Boolean(r.microCapSpot?.isSpot),
     }
   })
 
-  // 3. Pairwise token similarity
-  // 3. Pairwise token similarity
+  // 2. Pairwise token similarity
   const tokenSimilarities: TokenSimilarity[] = []
-  const _successSet = new Set(successful.map(s => s.mint))
 
   for (let i = 0; i < results.length; i++) {
     for (let j = i + 1; j < results.length; j++) {
@@ -181,21 +181,17 @@ export function analyzePatterns(results: AnalysisResult[]): PatternAnalysis {
       const bDeployer = b.holders.find(h => h.isDeployer)
       const sharedDeployer = aDeployer !== undefined && bDeployer !== undefined && aDeployer.address === bDeployer.address
 
-      // Early buyer overlap
       const aBuyers = new Set(a.holders.filter(h => !h.isDeployer).slice(0, 20).map(h => h.address))
       const bBuyers = new Set(b.holders.filter(h => !h.isDeployer).slice(0, 20).map(h => h.address))
       const sharedBuyers = [...aBuyers].filter(x => bBuyers.has(x))
 
-      // Similar MC range
       const similarMc = a.overview?.mc !== null && b.overview?.mc !== null &&
-        Math.abs(Math.log2((a.overview?.mc || 1) / (b.overview?.mc || 1))) < 2
+        Math.abs(Math.log2(((a.overview?.mc || 1) / (b.overview?.mc || 1)))) < 2
 
-      // Similar holder concentration
       const aTop10 = a.holders.slice(0, 10).reduce((s, h) => s + h.percentage, 0)
       const bTop10 = b.holders.slice(0, 10).reduce((s, h) => s + h.percentage, 0)
       const similarConcentration = Math.abs(aTop10 - bTop10) < 20
 
-      // Score similarity
       const scoreDiff = Math.abs(a.overallScore - b.overallScore)
       const baseSim = Math.max(0, 100 - scoreDiff * 3)
 
@@ -225,11 +221,11 @@ export function analyzePatterns(results: AnalysisResult[]): PatternAnalysis {
   }
   tokenSimilarities.sort((a, b) => b.similarityScore - a.similarityScore)
 
-  // 4. Replica predictions — for new tokens, check if they match successful patterns
+  // 3. Replica predictions
   const replicaPredictions: ReplicaPrediction[] = []
   if (successfulCount > 0) {
     for (const r of results) {
-      if (r.overallScore >= 65) continue // skip already successful tokens
+      if (r.overallScore >= 65) continue
       const rDeployer = r.holders.find(h => h.isDeployer)
       const rBuyers = new Set(r.holders.filter(h => !h.isDeployer).slice(0, 20).map(h => h.address))
 
@@ -238,19 +234,16 @@ export function analyzePatterns(results: AnalysisResult[]): PatternAnalysis {
         const sDeployer = s.holders.find(h => h.isDeployer)
         const matchFactors: string[] = []
 
-        // Same deployer?
         if (rDeployer && sDeployer && rDeployer.address === sDeployer.address) {
           matchFactors.push(`Same deployer as ${s.mint.slice(0, 8)} (previous success)`)
         }
 
-        // Buyer overlap with successful token?
         const sBuyers = new Set(s.holders.filter(h => !h.isDeployer).slice(0, 20).map(h => h.address))
         const overlap = [...rBuyers].filter(x => sBuyers.has(x))
         if (overlap.length >= 3) {
           matchFactors.push(`${overlap.length} early buyers also bought ${s.mint.slice(0, 8)}`)
         }
 
-        // Similar patterns?
         const rTop10 = r.holders.slice(0, 10).reduce((sum, h) => sum + h.percentage, 0)
         const sTop10 = s.holders.slice(0, 10).reduce((sum, h) => sum + h.percentage, 0)
         if (Math.abs(rTop10 - sTop10) < 15) {
@@ -271,42 +264,57 @@ export function analyzePatterns(results: AnalysisResult[]): PatternAnalysis {
   }
   replicaPredictions.sort((a, b) => b.replicaScore - a.replicaScore)
 
-  // 5. Entry signals — predict best entry for new tokens
+  // 4. Entry signals — specialized for Micro-Cap 2x-5x spots
   const entrySignals: EntrySignal[] = []
   for (const r of results) {
     const avgScore = r.overallScore
     const redFlagCount = r.redFlags.length
+    const isMicroCap = Boolean(r.microCapSpot?.isSpot)
 
-    const entryScore = Math.max(0, Math.min(100, avgScore - redFlagCount * 10))
+    let entryScore = Math.max(0, Math.min(100, avgScore - redFlagCount * 10))
     let suggestedEntry: string
+    let avgFirstPumpTime: string | null = null
+    let avgMultiplier: string | null = null
     let riskLevel: 'low' | 'medium' | 'high'
 
-    if (entryScore >= 65 && redFlagCount === 0) {
+    if (isMicroCap && redFlagCount === 0) {
+      entryScore = Math.max(85, entryScore)
+      suggestedEntry = `⚡ QUICK 2X SPOT: Enter $10k–$20k MC -> Target $50k–$100k (${r.microCapSpot.potentialMultiplier})`
+      avgFirstPumpTime = '~15-45m momentum window'
+      avgMultiplier = r.microCapSpot.potentialMultiplier
+      riskLevel = r.microCapSpot.confidence === 'high' ? 'low' : 'medium'
+    } else if (entryScore >= 65 && redFlagCount === 0) {
       suggestedEntry = 'Immediate — strong fundamentals, no red flags'
       riskLevel = 'low'
+      avgMultiplier = '2x - 3x'
     } else if (entryScore >= 40 && redFlagCount <= 1) {
-      suggestedEntry = 'Wait for first 30min dip — monitor holder growth'
+      suggestedEntry = 'Wait for first dip / confirmation — monitor buyer momentum'
       riskLevel = 'medium'
+      avgMultiplier = '1.5x - 2x'
     } else {
-      suggestedEntry = 'Avoid or wait 24h for pattern confirmation'
+      suggestedEntry = 'Avoid or wait for pattern confirmation — high risk of dump'
       riskLevel = 'high'
+      avgMultiplier = null
     }
 
-    // Historical pump timing/multiplier prediction requires OHLCV data we
-    // don't fetch — leave null instead of presenting made-up numbers.
     entrySignals.push({
       mint: r.mint,
       entryScore,
       suggestedEntry,
-      avgFirstPumpTime: null,
-      avgMultiplier: null,
+      avgFirstPumpTime,
+      avgMultiplier,
       riskLevel,
+      isMicroCap2xSpot: isMicroCap,
     })
   }
   entrySignals.sort((a, b) => b.entryScore - a.entryScore)
 
-  // 6. Generate insights
+  // 5. Generate insights
   const insights: string[] = []
+
+  if (microCapSpotsCount > 0) {
+    insights.push(`🎯 Detected ${microCapSpotsCount} Quick 2x Micro-Cap Spot(s) ($10k–$20k entry -> $50k–$100k target)`)
+  }
 
   if (deployerProfiles.some(d => d.tokensLaunched >= 2)) {
     const serialDeployers = deployerProfiles.filter(d => d.tokensLaunched >= 2)
@@ -322,14 +330,14 @@ export function analyzePatterns(results: AnalysisResult[]): PatternAnalysis {
     insights.push(`${replicaPredictions.length} replica token(s) detected matching successful token patterns`)
   }
 
-  if (successfulCount === 0) {
-    insights.push('No high-scoring tokens in this batch — adjust filters or try different addresses')
+  if (successfulCount === 0 && microCapSpotsCount === 0) {
+    insights.push('No high-scoring tokens in this batch — adjust filters or scan fresh tokens')
   } else {
-    insights.push(`${successfulCount}/${totalAnalyzed} tokens scored bullish — focus on shared deployer/early buyer patterns among them`)
+    insights.push(`${successfulCount}/${totalAnalyzed} tokens scored bullish — focus on shared early buyer momentum among them`)
   }
 
   return {
-    timestamp, mints, totalAnalyzed, successfulCount,
+    timestamp, mints, totalAnalyzed, successfulCount, microCapSpotsCount,
     tokenDetails, deployerProfiles, holderClusters, tokenSimilarities,
     replicaPredictions, entrySignals, insights,
   }

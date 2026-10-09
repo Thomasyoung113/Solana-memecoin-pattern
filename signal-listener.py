@@ -102,33 +102,39 @@ def classify(result: dict) -> tuple[str, list[str], str]:
     score = result.get("overallScore", 0)
     flags = result.get("redFlags", [])
     patterns = result.get("patterns", [])
-    mc = (result.get("overview") or {}).get("mc") or 0
+    ov = result.get("overview") or {}
+    mc = ov.get("mc") or 0
+    micro = result.get("microCapSpot") or {}
 
-    high = [f for f in flags if f.get("severity") == "high"]
+    high = [f for f in flags if f.get("severity") in ("high", "critical")]
     tags = []
     for f in flags:
         issue = f"{f.get('issue','')} {f.get('detail','')}".lower()
-        if "whale" in issue:
+        if "whale" in issue or "sniper" in issue:
             tags.append("#whale-heavy")
-        if "deployer" in issue or "creator" in issue:
-            tags.append("#fresh-deploy")
-        if "liquidity" in issue or "liq" in issue:
-            tags.append("#low-liq")
-        if "holder" in issue:
-            tags.append("#thin-holders")
-        if "tax" in issue or "mint" in issue and "authority" in issue:
-            tags.append("#contract-risk")
+        if "dev" in issue or "deployer" in issue or "creator" in issue:
+            tags.append("#dev-risk")
+        if "freeze" in issue or "mint" in issue or "authority" in issue:
+            tags.append("#authority-risk")
+        if "rugged" in issue:
+            tags.append("#rugged")
+
     for p in patterns:
         n = (p.get("name") or "").lower()
-        if "volume" in n and (p.get("score") or 0) >= 70:
-            tags.append("#high-volume")
-    if mc > 50_000_000:
-        tags.append("#established-mc")
+        if "velocity" in n and (p.get("score") or 0) >= 70:
+            tags.append("#high-velocity")
+        if "bonding curve" in n or "liquidity structure" in n:
+            tags.append("#bonding-curve")
 
-    if score >= 70 and not high:
-        cat, emoji = "APEABLE", "🟢"
-    elif score < 35 or ("#low-liq" in tags and "#whale-heavy" in tags):
+    if micro.get("isSpot"):
+        tags.append("#micro-cap-2x")
+
+    if score < 35 or len(high) >= 2 or any("rugged" in t or "freeze" in t for t in tags):
         cat, emoji = "RUG-SHAPED", "🔴"
+    elif micro.get("isSpot") and not high:
+        cat, emoji = "QUICK 2X SPOT", "🚀"
+    elif score >= 70 and not high:
+        cat, emoji = "APEABLE", "🟢"
     elif mc > 50_000_000:
         cat, emoji = "ESTABLISHED", "⚪"
     else:
@@ -140,30 +146,49 @@ def fmt_alert(result: dict, cat: str, tags: list[str], emoji: str,
               channel: str, link: str) -> str:
     ov = result.get("overview") or {}
     verdict = result.get("verdict", "?")
+    micro = result.get("microCapSpot") or {}
+    sec = result.get("security") or {}
+
     # Lead with the plain-English buy call
-    if cat == "APEABLE":
+    if cat == "QUICK 2X SPOT":
+        target = micro.get("targetExitMc", [50_000, 100_000])
+        call = f"⚡ QUICK 2X SPOT — ENTRY $10k–$20k MC\n🎯 Target Exit: ${target[0]:,.0f}–${target[1]:,.0f} MC ({micro.get('potentialMultiplier', '2.5x-5x')})"
+    elif cat == "APEABLE":
         call = "✅ SAFE TO BUY — conditions look good"
     elif cat == "RUG-SHAPED":
-        call = "❌ DO NOT BUY — looks like a rug"
+        call = "❌ DO NOT BUY — high rug risk or bad authorities"
     elif cat == "ESTABLISHED":
-        call = "⚪ ESTABLISHED — old token, not a fresh call"
+        call = "⚪ ESTABLISHED — old token, not a fresh micro-cap call"
     else:
         call = "⚠️ RISKY — gamble only if you accept losing it"
+
+    m5 = ov.get("txnsM5")
+    m5_str = f"5m: {m5.get('buys', 0)}B/{m5.get('sells', 0)}S (Vol: ${ov.get('volumeM5', 0):,.0f})" if m5 else ""
+
     lines = [
         call,
         "",
         f"{emoji} {cat} — {verdict.upper()} ({result.get('overallScore', 0)}/100)",
         f"*{ov.get('symbol') or 'Unknown'}* — MC ${ov.get('mc') or 0:,.0f}",
-        f"Liq ${ov.get('liquidity') or 0:,.0f} | 24h vol ${ov.get('volume24h') or 0:,.0f}",
-        f"CA: `{result.get('mint')}`",
+        f"Liq ${ov.get('liquidity') or 0:,.0f} | 24h Vol ${ov.get('volume24h') or 0:,.0f}",
     ]
+    if m5_str:
+        lines.append(f"Velocity: {m5_str}")
+    if sec:
+        dev_pct = sec.get("devHoldingPct", 0)
+        auth = "Revoked ✅" if sec.get("mintAuthorityRevoked") and sec.get("freezeAuthorityRevoked") else "Active ⚠️"
+        lines.append(f"Security: Dev {dev_pct:.1f}% | Authorities {auth} | Audit Score: {sec.get('score', '—')}")
+
+    lines.append(f"CA: `{result.get('mint')}`")
+
     flags = result.get("redFlags") or []
     if flags:
-        lines.append("Flags: " + "; ".join(f.get("issue", "?") for f in flags[:4]))
+        lines.append("Flags: " + "; ".join(f.get("issue", "?") for f in flags[:3]))
     if tags:
         lines.append(" ".join(tags))
     lines.append(f"Source: {channel} — {link}")
     lines.append(f"Dex: https://dexscreener.com/solana/{result.get('mint')}")
+    lines.append(f"RugCheck: https://rugcheck.xyz/tokens/{result.get('mint')}")
     return "\n".join(lines)
 
 

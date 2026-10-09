@@ -1,20 +1,13 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
-// REPLACED with DexScreener + Jupiter (free APIs, no keys needed)
-// This file keeps the same exports so analyzer.ts doesn't need changing.
+// Unified bridge using DexScreener (pricing/overview) and RugCheck (security)
+// Free APIs, no keys needed. Preserves the birdeye export signatures.
 
-import { getTokenOverview as dexOverview } from './dexscreener'
+import { getTokenOverview as dexOverview, type TokenOverview } from './dexscreener'
 import { getTokenPrice as jupiterPrice } from './jupiter'
+import { getSecurityInfo as rcSecurityInfo } from './rugcheck'
 
-export interface TokenOverview {
-  address: string
-  mc: number | null
-  price: number | null
-  volume24h: number | null
-  liquidity: number | null
-  holderCount: number | null
-  supply: number | null
-}
+export type { TokenOverview }
 
 export interface OHLCV {
   o: number
@@ -27,17 +20,7 @@ export interface OHLCV {
 
 // Get token overview via DexScreener
 export async function getTokenOverview(address: string): Promise<TokenOverview | null> {
-  const dex = await dexOverview(address)
-  if (!dex) return null
-  return {
-    address,
-    price: dex.price,
-    mc: dex.mc,
-    volume24h: dex.volume24h,
-    liquidity: dex.liquidity,
-    holderCount: dex.holderCount,
-    supply: null, // DexScreener doesn't supply total supply
-  }
+  return dexOverview(address)
 }
 
 // Get price via Jupiter
@@ -45,7 +28,7 @@ export async function getTokenPrice(address: string): Promise<number | null> {
   return jupiterPrice(address)
 }
 
-// OHLCV — DexScreener doesn't provide this directly, return null
+// OHLCV — return null (free tier doesn't provide historical candles)
 export async function getOhlcv(
   _address: string,
   _type?: string,
@@ -55,17 +38,17 @@ export async function getOhlcv(
   return null
 }
 
-// Security info — DexScreener doesn't provide this
-export async function getSecurityInfo(_address: string): Promise<any | null> {
-  return null
+// Security info — powered by free RugCheck API
+export async function getSecurityInfo(address: string): Promise<any | null> {
+  return rcSecurityInfo(address)
 }
 
-// Trades — DexScreener doesn't provide trade-level data
+// Trades — return null
 export async function getTrades(_address: string, _limit?: number): Promise<any[] | null> {
   return null
 }
 
-// Trending — return null (no trending from DexScreener free API)
+// Trending — return null
 export async function getTrending(): Promise<any[] | null> {
   return null
 }

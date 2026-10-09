@@ -19,9 +19,9 @@ import httpx
 ANALYZER_URL = os.getenv("ANALYZER_URL", "http://localhost:3000")
 DB_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "signals.db")
 
-# Hours after first sighting when a snapshot is due
-SNAPSHOT_SCHEDULE = [1, 6, 24, 72]
-# If a token loses this fraction of its MC vs first snapshot, flag as rugged
+# Hours after first sighting when a snapshot is due (includes early 15m/30m for micro-cap runs)
+SNAPSHOT_SCHEDULE = [0.25, 0.5, 1, 6, 24, 72]
+# If a token loses this fraction of its MC vs peak snapshot, flag as rugged
 RUG_DROP = 0.80
 
 db = sqlite3.connect(DB_FILE)
@@ -106,17 +106,26 @@ def update_outcome(mint: str):
     rugged = 1 if (peak_mc > 0 and final_mc <= peak_mc * (1 - RUG_DROP)) else 0
 
     all_taken = all(
-        any(abs(r["age_hours"] - h) < 0.25 for r in rows)
+        any(abs(r["age_hours"] - h) < max(0.1, h * 0.25) for r in rows)
         for h in SNAPSHOT_SCHEDULE
     )
+    is_micro_entry = 8_000 <= first_mc <= 25_000
+
     if first_mc == 0 and final_mc == 0:
         category = "DEAD"
     elif not all_taken:
-        # young token — no final verdict until the full snapshot schedule is in
-        category = "STILL_MOVING"
+        # Young token — but if it already hit 2x+ from micro entry, highlight early win!
+        if is_micro_entry and peak_mc >= 50_000:
+            category = "MICRO_2X_WINNER"
+        elif mult >= 2:
+            category = "WINNER"
+        else:
+            category = "STILL_MOVING"
     elif rugged:
-        # peaked then collapsed — the end state defines it, not the peak
+        # Peaked then collapsed
         category = "RUGGED"
+    elif is_micro_entry and peak_mc >= 50_000:
+        category = "MICRO_2X_WINNER"
     elif mult >= 2:
         category = "WINNER"
     else:

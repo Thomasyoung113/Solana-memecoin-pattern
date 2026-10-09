@@ -12,51 +12,97 @@ export interface DexToken {
   quoteToken: { address: string; name: string; symbol: string }
   priceNative: string
   priceUsd: string
-  txns: { m5: { buys: number; sells: number }; h1: { buys: number; sells: number }; h6: { buys: number; sells: number }; h24: { buys: number; sells: number } }
-  volume: { m5: string; h1: string; h6: string; h24: string }
-  priceChange: { m5: number; h1: number; h6: number; h24: number }
-  liquidity: { usd: string; base: string; quote: string }
-  fdv: string
-  marketCap: string
-  pairCreatedAt: number
-  info: {
-    image: string
-    header: string
-    openGraph: string
-    websites: { label: string; url: string }[]
-    socials: { type: string; url: string }[]
+  txns: {
+    m5: { buys: number; sells: number }
+    h1: { buys: number; sells: number }
+    h6: { buys: number; sells: number }
+    h24: { buys: number; sells: number }
   }
-  boosts: { active: number; done: number }
+  volume: { m5: number | string; h1: number | string; h6: number | string; h24: number | string }
+  priceChange: { m5: number; h1: number; h6: number; h24: number }
+  liquidity?: { usd?: number | string; base?: number | string; quote?: number | string }
+  fdv: number | string
+  marketCap: number | string
+  pairCreatedAt: number
+  info?: {
+    image?: string
+    header?: string
+    openGraph?: string
+    websites?: { label: string; url: string }[]
+    socials?: { type: string; url: string }[]
+  }
+  boosts?: { active: number; done: number }
   holders?: { address: string; amount: number; percent: number }[]
 }
 
-// Search token by address
+// Search token by mint address using direct token endpoint with search fallback
 export async function searchToken(mint: string): Promise<DexToken | null> {
   try {
-    const res = await fetch(`${BASE}/search?q=${mint}`, {
+    // 1. First try the direct token endpoint (fast, exact match, un-throttled)
+    const directRes = await fetch(`${BASE}/tokens/${mint}`, {
       headers: { accept: 'application/json' },
       signal: AbortSignal.timeout(10_000),
     })
-    const json = await res.json()
-    if (!json?.pairs?.length) return null
 
-    // Find the pair with most liquidity (usually the main one)
-    const pairs = json.pairs.sort((a: any, b: any) =>
-      parseFloat(b.liquidity?.usd || '0') - parseFloat(a.liquidity?.usd || '0')
-    )
-    return pairs[0]
-  } catch {
+    if (directRes.ok) {
+      const directJson = await directRes.json()
+      if (directJson?.pairs && Array.isArray(directJson.pairs) && directJson.pairs.length > 0) {
+        return selectBestPair(directJson.pairs)
+      }
+    }
+
+    // 2. Fallback to search endpoint if direct lookup returned no pairs
+    const searchRes = await fetch(`${BASE}/search?q=${mint}`, {
+      headers: { accept: 'application/json' },
+      signal: AbortSignal.timeout(10_000),
+    })
+
+    if (searchRes.ok) {
+      const searchJson = await searchRes.json()
+      if (searchJson?.pairs && Array.isArray(searchJson.pairs) && searchJson.pairs.length > 0) {
+        return selectBestPair(searchJson.pairs)
+      }
+    }
+
+    return null
+  } catch (err) {
+    console.debug(`DexScreener search error for ${mint}:`, err)
     return null
   }
 }
 
-// Get token profile with holders
+// Helper to select the most relevant Solana pair
+function selectBestPair(pairs: any[]): DexToken | null {
+  if (!pairs.length) return null
+
+  // Prioritize solana chain pairs
+  const solanaPairs = pairs.filter(p => p.chainId === 'solana')
+  const candidates = solanaPairs.length > 0 ? solanaPairs : pairs
+
+  // Sort by liquidity USD descending, then by marketCap descending
+  const sorted = [...candidates].sort((a, b) => {
+    const liqA = parseFloat(a.liquidity?.usd || '0')
+    const liqB = parseFloat(b.liquidity?.usd || '0')
+    if (liqA !== liqB) return liqB - liqA
+    const mcA = parseFloat(a.marketCap || a.fdv || '0')
+    const mcB = parseFloat(b.marketCap || b.fdv || '0')
+    return mcB - mcA
+  })
+
+  return sorted[0]
+}
+
+// Get token profile
 export async function getTokenProfile(mint: string): Promise<DexToken | null> {
   return searchToken(mint)
 }
 
 export interface TokenOverview {
   address: string
+  symbol: string | null
+  name: string | null
+  dexId: string | null
+  pairAddress: string | null
   price: number | null
   mc: number | null
   liquidity: number | null
@@ -65,26 +111,47 @@ export interface TokenOverview {
   holderCount: number | null
   txns24h: { buys: number; sells: number } | null
   priceChange24h: number | null
+  txnsM5: { buys: number; sells: number } | null
+  volumeM5: number | null
+  priceChangeM5: number | null
+  txnsH1: { buys: number; sells: number } | null
+  volumeH1: number | null
+  priceChangeH1: number | null
   pairCreatedAt: number | null
   boosts: number | null
+  supply: number | null
 }
 
 export async function getTokenOverview(mint: string): Promise<TokenOverview | null> {
   const token = await searchToken(mint)
   if (!token) return null
 
+  const mc = parseFloat(String(token.marketCap || '')) || parseFloat(String(token.fdv || '')) || null
+  const liqRaw = token.liquidity?.usd !== undefined ? parseFloat(String(token.liquidity.usd)) : null
+
   return {
     address: mint,
+    symbol: token.baseToken?.symbol || null,
+    name: token.baseToken?.name || null,
+    dexId: token.dexId || null,
+    pairAddress: token.pairAddress || null,
     price: parseFloat(token.priceUsd) || null,
-    mc: parseFloat(token.marketCap) || null,
-    liquidity: parseFloat(token.liquidity?.usd) || null,
-    volume24h: parseFloat(token.volume?.h24) || null,
-    fdv: parseFloat(token.fdv) || null,
+    mc,
+    liquidity: liqRaw,
+    volume24h: parseFloat(String(token.volume?.h24 || '')) || null,
+    fdv: parseFloat(String(token.fdv || '')) || null,
     holderCount: token.holders?.length || null,
     txns24h: token.txns?.h24 ? { buys: token.txns.h24.buys, sells: token.txns.h24.sells } : null,
     priceChange24h: token.priceChange?.h24 ?? null,
+    txnsM5: token.txns?.m5 ? { buys: token.txns.m5.buys, sells: token.txns.m5.sells } : null,
+    volumeM5: parseFloat(String(token.volume?.m5 || '')) || null,
+    priceChangeM5: token.priceChange?.m5 ?? null,
+    txnsH1: token.txns?.h1 ? { buys: token.txns.h1.buys, sells: token.txns.h1.sells } : null,
+    volumeH1: parseFloat(String(token.volume?.h1 || '')) || null,
+    priceChangeH1: token.priceChange?.h1 ?? null,
     pairCreatedAt: token.pairCreatedAt || null,
     boosts: token.boosts?.active ?? null,
+    supply: null,
   }
 }
 
@@ -96,31 +163,31 @@ export function detectVolumeManipulation(token: DexToken): {
 } {
   const reasons: string[] = []
 
-  const volM5 = parseFloat(token.volume?.m5 || '0')
-  const _volH1 = parseFloat(token.volume?.h1 || '0')
-  const volH24 = parseFloat(token.volume?.h24 || '0')
-  const liq = parseFloat(token.liquidity?.usd || '0')
+  const volM5 = parseFloat(String(token.volume?.m5 || '0'))
+  const volH24 = parseFloat(String(token.volume?.h24 || '0'))
+  const liq = parseFloat(String(token.liquidity?.usd || '0'))
   const buysM5 = token.txns?.m5?.buys || 0
   const sellsM5 = token.txns?.m5?.sells || 0
 
   // Volume-to-liquidity ratio too high = suspicious
-  if (volH24 > 0 && liq > 0 && volH24 / liq > 20) {
-    reasons.push(`Volume/liq ratio ${(volH24/liq).toFixed(1)}x — extremely high`)
+  if (volH24 > 0 && liq > 0 && volH24 / liq > 25) {
+    reasons.push(`Volume/liq ratio ${(volH24 / liq).toFixed(1)}x — extremely high`)
   }
 
-  // M5 volume > 50% of 24h volume = pump & dump pattern
-  if (volM5 > 0 && volH24 > 0 && volM5 / volH24 > 0.5) {
-    reasons.push(`5min volume is ${((volM5/volH24)*100).toFixed(0)}% of 24h volume — wash trading`)
+  // M5 volume > 50% of 24h volume on an older token = pump & dump pattern
+  const ageHours = token.pairCreatedAt ? (Date.now() - token.pairCreatedAt) / 3600000 : 0
+  if (ageHours > 6 && volM5 > 0 && volH24 > 0 && volM5 / volH24 > 0.5) {
+    reasons.push(`5min volume is ${((volM5 / volH24) * 100).toFixed(0)}% of 24h volume — wash trading`)
   }
 
-  // No sells = manipulated buys
-  if (buysM5 > 10 && sellsM5 === 0) {
-    reasons.push('High buys with zero sells — unnatural')
+  // No sells with massive buys
+  if (buysM5 > 20 && sellsM5 === 0) {
+    reasons.push('High buys with zero sells — unnatural or honeypot')
   }
 
-  // Liquidity too low relative to volume
-  if (volH24 > 50000 && liq < 5000) {
-    reasons.push('High volume with <$5k liquidity — fabricated volume')
+  // Fabricated volume
+  if (volH24 > 50000 && liq > 0 && liq < 2000) {
+    reasons.push('High volume with <$2k liquidity — fabricated volume')
   }
 
   const confidence: 'high' | 'medium' | 'low' =

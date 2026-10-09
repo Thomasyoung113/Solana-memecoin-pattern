@@ -95,23 +95,16 @@ story.append(Paragraph(overview, body_style))
 story.append(Spacer(1, 6))
 
 # Section 1
-story.append(Paragraph("1. Starting the Background Daemon (Zero-Telethon)", h1_style))
-story.append(Paragraph("Run the listener and outcome tracker as a persistent background daemon:", body_style))
-story.append(Paragraph("cd ~/Solana-memecoin-pattern<br/>nohup python3 -u signal-listener.py &gt; listener.log 2&gt;&amp;1 &amp;", code_style))
+story.append(Paragraph("1. Unified Dual-Engine Runner (One Command for Both Bots)", h1_style))
+story.append(Paragraph("A master runner is installed at <b>~/run.sh</b>. Running this command controls both the <b>Gem Alert Bot</b> ($200k+ MC) and the <b>Pattern Spotter Bot</b> (Micro-Cap 2x Quick Spots) simultaneously:", body_style))
+story.append(Paragraph("./run.sh start      # Starts BOTH bots in background<br/>./run.sh status     # Displays live status, PIDs, alerts, and 2x hits<br/>./run.sh stop       # Gracefully stops both bots<br/>./run.sh restart    # Restarts both bots<br/>./run.sh logs       # Streams combined real-time logs", code_style))
 
-story.append(Paragraph("Run the Next.js Web UI &amp; Pattern Dashboard (Port 3000):", body_style))
-story.append(Paragraph("cd ~/Solana-memecoin-pattern<br/>nohup npm run start &gt; web.log 2&gt;&amp;1 &amp;", code_style))
+story.append(Paragraph("You can run <b>./run.sh</b> from anywhere: your home directory (~), ~/memecoin-alert-bot, or ~/Solana-memecoin-pattern.", body_style))
 
 # Section 2
-story.append(Paragraph("2. Process Management &amp; Log Monitoring", h1_style))
-story.append(Paragraph("View live signal listener activity and outcome updates in real-time:", body_style))
-story.append(Paragraph("tail -f ~/Solana-memecoin-pattern/listener.log", code_style))
-
-story.append(Paragraph("Verify active background daemons:", body_style))
-story.append(Paragraph("ps aux | grep -E 'signal-listener|next'", code_style))
-
-story.append(Paragraph("Stop the listener daemon cleanly:", body_style))
-story.append(Paragraph("pkill -f signal-listener.py", code_style))
+story.append(Paragraph("2. Individual Bot Commands &amp; Monitoring", h1_style))
+story.append(Paragraph("To start or check bots individually:", body_style))
+story.append(Paragraph("./run.sh alert-only    # Starts Gem Alert Bot ($200k+ MC)<br/>./run.sh pattern-only  # Starts Pattern Spotter (Micro-Cap 2x)<br/>./run.sh logs alert    # Streams Alert Bot logs only<br/>./run.sh logs pattern  # Streams Pattern Bot logs only", code_style))
 
 # Section 3
 story.append(Paragraph("3. Foundation &amp; Database Inspection (SQLite)", h1_style))

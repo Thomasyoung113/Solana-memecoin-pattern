@@ -3,10 +3,20 @@ import { getTokenInfo, getTokenHolders, type TokenHolder } from './helius'
 import { getRugCheckReport, type RugCheckReport } from './rugcheck'
 import { getDb } from './db'
 
+export interface ExitTarget {
+  name: string
+  mc: number | [number, number]
+  targetDisplay: string
+  potentialGain: string
+  strategy: string
+}
+
 export interface MicroCapSpot {
   isSpot: boolean
   entryMc: number | null
   targetExitMc: [number, number]
+  tp1_scalp: ExitTarget
+  tp2_runner: ExitTarget
   potentialMultiplier: string
   confidence: 'high' | 'medium' | 'low'
   reasons: string[]
@@ -156,10 +166,14 @@ function evaluateMicroCapSpot(
   const mc = overview?.mc ?? 0
   const reasons: string[] = []
 
-  // Entry range: ideal $10,000 - $20,000 (tolerance $8k - $25k)
-  const mcInRange = mc >= 8_000 && mc <= 25_000
+  // Entry range: $6,000 - $22,000 (entering at $8k-$12k makes $20k an exact 2x take-profit!)
+  const mcInRange = mc >= 6_000 && mc <= 22_000
   if (mcInRange) {
-    reasons.push(`MC $${Math.round(mc).toLocaleString()} is in optimal micro-cap entry zone ($10k–$20k)`)
+    if (mc <= 12_000) {
+      reasons.push(`MC $${Math.round(mc).toLocaleString()} is prime early entry — taking profit at $20k MC is an instant 2x scalp!`)
+    } else {
+      reasons.push(`MC $${Math.round(mc).toLocaleString()} is in micro-cap zone — TP1 at $20k–$25k MC (2x) and TP2 at $50k–$100k MC`)
+    }
   }
 
   // Dev holding: dev holds <= 8% (ideally 0% or < 5%)
@@ -212,11 +226,32 @@ function evaluateMicroCapSpot(
   const isSpot = mcInRange && devHoldingSafe && authoritiesRevoked && lpLocked && passedCount >= 5
   const confidence = passedCount === 6 ? 'high' : passedCount >= 5 ? 'medium' : 'low'
 
+  const tp1Multiplier = mc > 0 ? `${Math.max(1.5, Math.round((20_000 / mc) * 10) / 10)}x` : '2.0x'
+  const tp2Multiplier = mc > 0 ? `${Math.max(2.5, Math.round((50_000 / mc) * 10) / 10)}x - ${Math.round((100_000 / mc) * 10) / 10}x` : '2.5x - 5.0x'
+
+  const tp1_scalp: ExitTarget = {
+    name: 'TP1 (Quick 2x Take-Profit)',
+    mc: 20_000,
+    targetDisplay: '$20,000 – $25,000 MC',
+    potentialGain: tp1Multiplier,
+    strategy: 'Take initial capital / 50% profit off at $20k MC (de-risk)',
+  }
+
+  const tp2_runner: ExitTarget = {
+    name: 'TP2 (Graduation Runner)',
+    mc: [50_000, 100_000],
+    targetDisplay: '$50,000 – $100,000 MC',
+    potentialGain: tp2Multiplier,
+    strategy: 'Let runner ride to bonding curve graduation ($50k–$100k MC)',
+  }
+
   return {
     isSpot,
     entryMc: mc > 0 ? Math.round(mc) : null,
-    targetExitMc: [50_000, 100_000],
-    potentialMultiplier: '2.5x - 5.0x',
+    targetExitMc: [20_000, 100_000],
+    tp1_scalp,
+    tp2_runner,
+    potentialMultiplier: `2.0x (at $20k MC) – 5.0x (at $100k MC)`,
     confidence,
     reasons,
     checklist,
@@ -236,17 +271,23 @@ function evaluatePatterns(
 
   // 1. Micro-Cap 2x Setup Pattern
   if (isMicroCap) {
-    if (mc >= 10_000 && mc <= 20_000) {
+    if (mc >= 6_000 && mc <= 12_000) {
       patterns.push({
-        name: 'Micro-Cap 2x Window ($10k–$20k)',
+        name: 'Early Micro-Cap 2x Setup ($6k–$12k)',
         score: 95,
-        detail: `$${Math.round(mc).toLocaleString()} MC — prime entry sweetspot ($10k–$20k) targeting $50k–$100k graduation exit`,
+        detail: `$${Math.round(mc).toLocaleString()} MC — prime early entry: take profit at $20k MC (${(20_000 / mc).toFixed(1)}x scalp) & runner exit at $50k–$100k`,
       })
-    } else if (mc >= 8_000 && mc <= 25_000) {
+    } else if (mc > 12_000 && mc <= 20_000) {
       patterns.push({
-        name: 'Micro-Cap Setup ($8k–$25k)',
-        score: 85,
-        detail: `$${Math.round(mc).toLocaleString()} MC — within 2x-5x target entry range`,
+        name: 'Micro-Cap 2x Window ($12k–$20k)',
+        score: 92,
+        detail: `$${Math.round(mc).toLocaleString()} MC — entering before/at $20k TP1; momentum targeting graduation at $50k–$100k`,
+      })
+    } else if (mc > 20_000 && mc <= 35_000) {
+      patterns.push({
+        name: 'Micro-Cap Breakout Stage',
+        score: 80,
+        detail: `$${Math.round(mc).toLocaleString()} MC — post-TP1 continuation targeting $50k–$100k graduation`,
       })
     } else {
       patterns.push({

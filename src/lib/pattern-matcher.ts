@@ -279,9 +279,11 @@ export function analyzePatterns(results: AnalysisResult[]): PatternAnalysis {
 
     if (isMicroCap && redFlagCount === 0) {
       entryScore = Math.max(85, entryScore)
-      suggestedEntry = `⚡ QUICK 2X SPOT: Enter $10k–$20k MC -> Target $50k–$100k (${r.microCapSpot.potentialMultiplier})`
+      const tp1Gain = r.microCapSpot.tp1_scalp?.potentialGain || '2.0x'
+      const tp2Gain = r.microCapSpot.tp2_runner?.potentialGain || '5.0x'
+      suggestedEntry = `⚡ QUICK 2X SPOT: Enter $8k–$15k MC -> TP1 at $20k MC (${tp1Gain}) | TP2 at $50k–$100k (${tp2Gain})`
       avgFirstPumpTime = '~15-45m momentum window'
-      avgMultiplier = r.microCapSpot.potentialMultiplier
+      avgMultiplier = `TP1: ${tp1Gain} / TP2: ${tp2Gain}`
       riskLevel = r.microCapSpot.confidence === 'high' ? 'low' : 'medium'
     } else if (entryScore >= 65 && redFlagCount === 0) {
       suggestedEntry = 'Immediate — strong fundamentals, no red flags'

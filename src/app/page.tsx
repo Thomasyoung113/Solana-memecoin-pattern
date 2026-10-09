@@ -28,10 +28,20 @@ interface TokenOverview {
   volumeH1: number | null
 }
 
+interface ExitTarget {
+  name: string
+  mc: number | [number, number]
+  targetDisplay: string
+  potentialGain: string
+  strategy: string
+}
+
 interface MicroCapSpot {
   isSpot: boolean
   entryMc: number | null
   targetExitMc: [number, number]
+  tp1_scalp?: ExitTarget
+  tp2_runner?: ExitTarget
   potentialMultiplier: string
   confidence: 'high' | 'medium' | 'low'
   reasons: string[]
@@ -360,8 +370,9 @@ export default function Home() {
                 <span className="text-[14px] font-bold uppercase text-[var(--green)]">QUICK 2X RULES</span>
               </div>
               <ul className="text-[13px] text-[var(--body)] space-y-2">
-                <li><strong className="text-[var(--green)]">Entry Range:</strong> $10k – $20k MC</li>
-                <li><strong className="text-[var(--green)]">Target Exit:</strong> $50k – $100k MC</li>
+                <li><strong className="text-[var(--green)]">Entry Range:</strong> $8k – $15k MC</li>
+                <li><strong className="text-[var(--green)]">TP1 (Quick 2x):</strong> $20k – $25k MC (take initial)</li>
+                <li><strong className="text-[var(--green)]">TP2 (Runner):</strong> $50k – $100k MC (graduation)</li>
                 <li><strong className="text-[var(--green)]">Dev Bag:</strong> ≤ 8% (ideally 0%)</li>
                 <li><strong className="text-[var(--green)]">Authorities:</strong> Mint &amp; Freeze revoked</li>
                 <li><strong className="text-[var(--green)]">Liquidity:</strong> Pump.fun curve or locked LP</li>
@@ -411,19 +422,22 @@ function ResultCard({ result }: { result: AnalysisResult }) {
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-[16px] py-[12px] border-y border-[var(--hairline)] mb-[16px]">
             <div>
               <p className="text-[11px] text-[var(--mute)] uppercase font-bold">Optimal Entry</p>
-              <p className="text-[16px] font-bold font-mono">$10k – $20k MC</p>
+              <p className="text-[16px] font-bold font-mono">$8k – $15k MC</p>
             </div>
             <div>
-              <p className="text-[11px] text-[var(--mute)] uppercase font-bold">Target Exit</p>
+              <p className="text-[11px] text-[var(--mute)] uppercase font-bold">TP1 (Quick 2x)</p>
+              <p className="text-[16px] font-bold font-mono text-[var(--green)]">$20k – $25k MC</p>
+              <span className="text-[10px] text-[var(--mute)] block">Take initial / de-risk</span>
+            </div>
+            <div>
+              <p className="text-[11px] text-[var(--mute)] uppercase font-bold">TP2 (Runner Exit)</p>
               <p className="text-[16px] font-bold font-mono text-[var(--green)]">$50k – $100k MC</p>
-            </div>
-            <div>
-              <p className="text-[11px] text-[var(--mute)] uppercase font-bold">Current MC</p>
-              <p className="text-[16px] font-bold font-mono">{formatUsd(result.overview?.mc)}</p>
+              <span className="text-[10px] text-[var(--mute)] block">Graduation push</span>
             </div>
             <div>
               <p className="text-[11px] text-[var(--mute)] uppercase font-bold">Dev Holding</p>
               <p className="text-[16px] font-bold font-mono">{sec?.devHoldingPct !== undefined ? `${sec.devHoldingPct.toFixed(1)}%` : '—'}</p>
+              <span className="text-[10px] text-[var(--mute)] block">Current: {formatUsd(result.overview?.mc)}</span>
             </div>
           </div>
 

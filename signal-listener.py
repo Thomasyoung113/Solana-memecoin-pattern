@@ -151,8 +151,13 @@ def fmt_alert(result: dict, cat: str, tags: list[str], emoji: str,
 
     # Lead with the plain-English buy call
     if cat == "QUICK 2X SPOT":
-        target = micro.get("targetExitMc", [50_000, 100_000])
-        call = f"⚡ QUICK 2X SPOT — ENTRY $10k–$20k MC\n🎯 Target Exit: ${target[0]:,.0f}–${target[1]:,.0f} MC ({micro.get('potentialMultiplier', '2.5x-5x')})"
+        tp1 = micro.get("tp1_scalp", {})
+        tp2 = micro.get("tp2_runner", {})
+        call = (
+            f"⚡ QUICK 2X SPOT — MICRO ENTRY (${ov.get('mc', 0):,.0f} MC)\n"
+            f"🎯 TP1 (Quick 2x Take-Profit): {tp1.get('targetDisplay', '$20k–$25k MC')} ({tp1.get('potentialGain', '2.0x')})\n"
+            f"🚀 TP2 (Runner Exit): {tp2.get('targetDisplay', '$50k–$100k MC')} ({tp2.get('potentialGain', '5.0x')})"
+        )
     elif cat == "APEABLE":
         call = "✅ SAFE TO BUY — conditions look good"
     elif cat == "RUG-SHAPED":

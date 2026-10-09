@@ -109,13 +109,13 @@ def update_outcome(mint: str):
         any(abs(r["age_hours"] - h) < max(0.1, h * 0.25) for r in rows)
         for h in SNAPSHOT_SCHEDULE
     )
-    is_micro_entry = 8_000 <= first_mc <= 25_000
+    is_micro_entry = 6_000 <= first_mc <= 22_000
 
     if first_mc == 0 and final_mc == 0:
         category = "DEAD"
     elif not all_taken:
-        # Young token — but if it already hit 2x+ from micro entry, highlight early win!
-        if is_micro_entry and peak_mc >= 50_000:
+        # Young token — but if it already hit 2x+ (at $20k+ MC) from micro entry, highlight early win!
+        if is_micro_entry and (peak_mc >= 20_000 or mult >= 2):
             category = "MICRO_2X_WINNER"
         elif mult >= 2:
             category = "WINNER"
@@ -124,7 +124,7 @@ def update_outcome(mint: str):
     elif rugged:
         # Peaked then collapsed
         category = "RUGGED"
-    elif is_micro_entry and peak_mc >= 50_000:
+    elif is_micro_entry and (peak_mc >= 20_000 or mult >= 2):
         category = "MICRO_2X_WINNER"
     elif mult >= 2:
         category = "WINNER"
